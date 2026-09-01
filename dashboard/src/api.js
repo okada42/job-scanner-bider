@@ -1,5 +1,5 @@
 const KEY = "jsb_token";
-const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+export const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 export function getToken() {
   return localStorage.getItem(KEY) || "";
@@ -12,14 +12,23 @@ export function setToken(token) {
 export async function api(path, options = {}) {
   const headers = {
     "Content-Type": "application/json",
-    "X-API-Token": getToken(),
     ...(options.headers || {}),
   };
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const token = getToken();
+  if (token) headers["X-API-Token"] = token;
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: "omit" });
+  const text = await res.text();
   if (!res.ok) {
-    const text = await res.text();
     throw new Error(text || res.statusText);
   }
-  if (res.status === 204) return null;
-  return res.json();
+  if (res.status === 204 || !text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      API_BASE
+        ? "Backend returned a non-JSON response."
+        : "VITE_API_URL is empty. Set it on Netlify to the Railway URL and rebuild; local Vite needs none (proxy)."
+    );
+  }
 }

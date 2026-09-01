@@ -21,12 +21,14 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Job Scanner + Bider", lifespan=lifespan)
+# Token is sent in X-API-Token, not cookies. Browsers block allow_origins=["*"]
+# combined with allow_credentials=True, which would break Netlify → Railway login.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Token", "Authorization", "Accept"],
 )
 app.include_router(scanners_router)
 app.include_router(jobs_router)

@@ -42,16 +42,20 @@ export default function App() {
   async function tryLogin(e) {
     e.preventDefault();
     setError("");
-    const res = await api("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ token: login }),
-    });
-    if (!res.ok) {
-      setError("Invalid token");
-      return;
+    try {
+      const res = await api("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ token: login }),
+      });
+      if (!res?.ok) {
+        setError("Invalid token");
+        return;
+      }
+      setToken(login);
+      setTok(login);
+    } catch (err) {
+      setError(err.message || "Login failed");
     }
-    setToken(login);
-    setTok(login);
   }
 
   if (!authed) {

@@ -31,7 +31,7 @@ Root `Dockerfile` + `railway.toml` already target FastAPI.
 - **Builder:** Dockerfile (`railway.toml` sets `dockerfilePath = "Dockerfile"`).
 - Railway injects `PORT`; `backend/run.py` binds to it.
 - **Health check:** `/api/health`
-- CORS allows all origins (`allow_origins=["*"]`), so the Netlify dashboard origin is fine.
+- CORS allows all origins (`allow_origins=["*"]`, `allow_credentials=False`) so the Netlify dashboard can call Railway with `X-API-Token`.
 
 Variables (same names as `.env.example`; never commit real values):
 
@@ -63,9 +63,11 @@ Connect the **same** GitHub repo. Do not deploy the extension or the Python back
 | --- | --- |
 | `VITE_API_URL` | Railway public URL, **no trailing slash** (example `https://<service>.up.railway.app`) |
 
+Netlify needs `VITE_API_URL` set to the Railway public URL and a rebuild; local Vite needs none because `/api` is proxied.
+
 `import.meta.env.VITE_API_URL` is baked in at `npm run build`. Empty means same-origin (local Vite proxy). A set value means the browser talks to Railway FastAPI directly.
 
-Redeploy the Netlify site after changing `VITE_API_URL`.
+Redeploy the Netlify site after changing `VITE_API_URL`. After a CORS change, wait for Railway to auto-deploy from GitHub, then Redeploy Netlify.
 
 ---
 
