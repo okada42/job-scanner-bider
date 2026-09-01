@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Job Bider",
+  "version": "0.1.0",
+  "description": "Prepares job applications. Never submits.",
+  "permissions": ["storage", "sidePanel", "tabs", "alarms", "notifications"],
+  "host_permissions": [
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "https://*.up.railway.app/*",
+    "https://*.railway.app/*",
+    "https://crowdworks.jp/*",
+    "https://www.crowdworks.jp/*",
+    "https://www.lancers.jp/*",
+    "https://lancers.jp/*",
+    "https://coconala.com/*",
+    "https://www.coconala.com/*",
+    "https://jobmatching-web.coconala.com/*"
+  ],
+  "background": { "service_worker": "background/service-worker.js" },
+  "action": { "default_title": "Job Bider", "default_popup": "popup/popup.html" },
+  "side_panel": { "default_path": "sidepanel/sidepanel.html" },
+  "options_page": "popup/options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://crowdworks.jp/*", "https://www.crowdworks.jp/*"],
+      "js": ["platforms/crowdworks/adapter.js", "content/content-script.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.lancers.jp/*", "https://lancers.jp/*"],
+      "js": ["platforms/lancers/adapter.js", "content/content-script.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://coconala.com/*",
+        "https://www.coconala.com/*",
+        "https://jobmatching-web.coconala.com/*"
+      ],
+      "js": ["platforms/coconala/adapter.js", "content/content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

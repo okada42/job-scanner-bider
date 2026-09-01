@@ -1,0 +1,74 @@
+:root {
+  --bg: #0f1419;
+  --card: #1a222c;
+  --line: #2c3948;
+  --text: #e8eef4;
+  --muted: #8aa0b5;
+  --accent: #3dd68c;
+  --stop: #ff6b6b;
+  --warn: #f5c542;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+header, .card, .login .card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  margin: 16px;
+}
+h1, h2 { margin: 0 0 8px; }
+.muted { color: var(--muted); margin: 0; }
+#app { padding: 0 16px 40px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px; }
+.grow { min-width: 0; }
+.card { padding: 16px; margin: 16px; }
+.grid .card { margin: 0; }
+.row { display: flex; gap: 8px; }
+button, select, input {
+  background: #0f1419;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+button { cursor: pointer; background: #1f6feb; border-color: #1f6feb; }
+button.ghost { background: transparent; color: var(--text); }
+button.small { padding: 4px 8px; font-size: 12px; }
+.pill { padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+.pill.on { color: var(--accent); }
+.pill.off { color: var(--stop); }
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+.login .card { width: 360px; padding: 24px; }
+label { display: block; margin: 8px 0; color: var(--muted); }
+.check { display: flex; gap: 8px; align-items: center; }
+.add { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.source, .job {
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.title { font-weight: 600; }
+.meta { color: var(--muted); font-size: 12px; }
+.error { color: var(--stop); }
+a { color: #6cb6ff; }
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,241 @@
+from __future__ import annotations
+
+import json
+import re
+from urllib.parse import urljoin, urlparse
+
+from bs4 import BeautifulSoup
+
+from app.platforms.base import ExtractedJob, PlatformAdapter
+
+
+def absolute(base: str, href: str) -> str:
+    return urljoin(base, href)
+
+
+def load_next_data(html: str) -> dict | None:
+    soup = BeautifulSoup(html, "lxml")
+    tag = soup.find("script", id="__NEXT_DATA__")
+    if not tag or not tag.string:
+        return None
+    try:
+        return json.loads(tag.string)
+    except json.JSONDecodeError:
+        return None
+
+
+def walk(obj):
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from walk(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from walk(item)
+
+
+def text(el) -> str | None:
+    if not el:
+        return None
+    value = el.get_text(" ", strip=True)
+    return value or None
+
+
+class CrowdWorksAdapter(PlatformAdapter):
+    name = "crowdworks"
+    hosts = ("crowdworks.jp", "www.crowdworks.jp")
+    id_re = re.compile(r"/public/jobs/(\d+)")
+
+    def parse_listing(self, html: str, page_url: str) -> list[ExtractedJob]:
+        jobs: dict[str, ExtractedJob] = {}
+        soup = BeautifulSoup(html, "lxml")
+
+        for a in soup.select("a[href*='/public/jobs/']"):
+            href = a.get("href") or ""
+            m = self.id_re.search(href)
+            if not m:
+                continue
+            jid = m.group(1)
+            url = absolute(page_url, href.split("?")[0])
+            card = a.find_parent(["li", "article", "div"]) or a
+            title = text(a) or text(card.select_one("h2, h3, .item_title"))
+            client = text(card.select_one(".user-name, .client, [class*='client']"))
+            budget = text(card.select_one(".payment, .amount, [class*='payment'], [class*='amount']"))
+            deadline = text(card.select_one(".absolute_date, [class*='deadline'], [class*='date']"))
+            apps = _apps(text(card))
+            jobs[jid] = ExtractedJob(
+                platform=self.name,
+                external_job_id=jid,
+                url=url,
+                title=title if title and "jobs" not in title.lower() else title,
+                client=client,
+                budget=budget,
+                deadline=deadline,
+                application_count=apps,
+            )
+
+        data = load_next_data(html)
+        if data:
+            for node in walk(data):
+                url = str(node.get("url") or node.get("job_url") or "")
+                m = self.id_re.search(url)
+                jid = m.group(1) if m else None
+                if not jid:
+                    maybe = str(node.get("id") or "")
+                    if maybe.isdigit() and (node.get("title") or node.get("job_title")):
+                        jid = maybe
+                if not jid:
+                    continue
+                full = url if url.startswith("http") else f"https://crowdworks.jp/public/jobs/{jid}"
+                prev = jobs.get(jid)
+                jobs[jid] = ExtractedJob(
+                    platform=self.name,
+                    external_job_id=jid,
+                    url=full.split("?")[0],
+                    title=node.get("title") or node.get("job_title") or (prev.title if prev else None),
+                    client=node.get("client_name") or node.get("user_name") or (prev.client if prev else None),
+                    budget=str(node.get("payment") or node.get("budget") or "") or (prev.budget if prev else None),
+                    deadline=str(node.get("deadline") or "") or (prev.deadline if prev else None),
+                    application_count=_as_int(node.get("applications") or node.get("entry_count")),
+                )
+        return list(jobs.values())
+
+
+class LancersAdapter(PlatformAdapter):
+    name = "lancers"
+    hosts = ("lancers.jp", "www.lancers.jp")
+    id_re = re.compile(r"/work/detail/(\d+)")
+
+    def parse_listing(self, html: str, page_url: str) -> list[ExtractedJob]:
+        jobs: dict[str, ExtractedJob] = {}
+        soup = BeautifulSoup(html, "lxml")
+        for a in soup.select("a[href*='/work/detail/']"):
+            href = a.get("href") or ""
+            m = self.id_re.search(href)
+            if not m:
+                continue
+            jid = m.group(1)
+            card = a.find_parent(["li", "article", "div"]) or a
+            jobs[jid] = ExtractedJob(
+                platform=self.name,
+                external_job_id=jid,
+                url=absolute(page_url, href.split("?")[0]),
+                title=text(a),
+                client=text(card.select_one("[class*='client'], [class*='user']")),
+                budget=text(card.select_one("[class*='price'], [class*='reward'], [class*='budget']"))
+                or _first_yen(text(card)),
+                deadline=text(card.select_one("[class*='limit'], [class*='remain']")),
+                application_count=_apps(text(card)),
+            )
+        data = load_next_data(html)
+        if data:
+            for node in walk(data):
+                url = str(node.get("url") or node.get("work_url") or node.get("permalink") or "")
+                m = self.id_re.search(url) or self.id_re.search(str(node.get("id") or ""))
+                jid = None
+                if m:
+                    jid = m.group(1)
+                elif str(node.get("id", "")).isdigit() and node.get("title"):
+                    jid = str(node["id"])
+                if not jid:
+                    continue
+                jobs[jid] = ExtractedJob(
+                    platform=self.name,
+                    external_job_id=jid,
+                    url=url if url.startswith("http") else f"https://www.lancers.jp/work/detail/{jid}",
+                    title=node.get("title") or node.get("name"),
+                    client=(node.get("client") or {}).get("name") if isinstance(node.get("client"), dict) else node.get("client_name"),
+                    budget=str(node.get("price") or node.get("budget") or node.get("reward") or "") or None,
+                    deadline=str(node.get("ended_at") or node.get("deadline") or "") or None,
+                    application_count=_as_int(node.get("proposal_count") or node.get("proposals")),
+                )
+        return list(jobs.values())
+
+
+class CoconalaAdapter(PlatformAdapter):
+    name = "coconala"
+    hosts = ("coconala.com", "www.coconala.com", "jobmatching-web.coconala.com")
+    id_re = re.compile(r"/requests/(\d+)")
+
+    def parse_listing(self, html: str, page_url: str) -> list[ExtractedJob]:
+        jobs: dict[str, ExtractedJob] = {}
+        soup = BeautifulSoup(html, "lxml")
+        for a in soup.select("a[href*='/requests/']"):
+            href = a.get("href") or ""
+            m = self.id_re.search(href)
+            if not m:
+                continue
+            jid = m.group(1)
+            card = a.find_parent(["li", "article", "div"]) or a
+            jobs[jid] = ExtractedJob(
+                platform=self.name,
+                external_job_id=jid,
+                url=absolute(page_url, href.split("?")[0]),
+                title=text(a),
+                client=text(card.select_one("[class*='user'], [class*='client']")),
+                budget=_first_yen(text(card)),
+                deadline=text(card.select_one("[class*='limit'], [class*='date']")),
+                application_count=_apps(text(card)),
+            )
+        data = load_next_data(html)
+        if data:
+            for node in walk(data):
+                url = str(node.get("url") or node.get("request_url") or "")
+                m = self.id_re.search(url)
+                jid = m.group(1) if m else None
+                if not jid and str(node.get("id", "")).isdigit() and (node.get("title") or node.get("name")):
+                    jid = str(node["id"])
+                if not jid:
+                    continue
+                jobs[jid] = ExtractedJob(
+                    platform=self.name,
+                    external_job_id=jid,
+                    url=url if url.startswith("http") else f"https://coconala.com/requests/{jid}",
+                    title=node.get("title") or node.get("name"),
+                    client=node.get("user_name") or node.get("client_name"),
+                    budget=str(node.get("budget") or node.get("price") or "") or None,
+                    deadline=str(node.get("expire_date") or node.get("deadline") or "") or None,
+                    application_count=_as_int(node.get("proposal_count") or node.get("offers_count")),
+                )
+        return list(jobs.values())
+
+
+def _as_int(value) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(re.sub(r"[^\d]", "", str(value)) or 0) or int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _apps(blob: str | None) -> int | None:
+    if not blob:
+        return None
+    m = re.search(r"(応募|提案|募集)\s*[:：]?\s*(\d+)", blob)
+    if m:
+        return int(m.group(2))
+    return None
+
+
+def _first_yen(blob: str | None) -> str | None:
+    if not blob:
+        return None
+    m = re.search(r"((?:\d{1,3}(?:,\d{3})+|\d+)\s*(?:円)?\s*(?:[~〜\-–]|から)?\s*(?:\d{1,3}(?:,\d{3})+|\d+)?\s*円)", blob)
+    return m.group(1) if m else None
+
+
+def detect_platform(url: str) -> str | None:
+    host = urlparse(url).hostname or ""
+    host = host.lower()
+    for adapter in ADAPTERS.values():
+        if any(host == h or host.endswith("." + h) for h in adapter.hosts):
+            return adapter.name
+    return None
+
+
+ADAPTERS: dict[str, PlatformAdapter] = {
+    "crowdworks": CrowdWorksAdapter(),
+    "lancers": LancersAdapter(),
+    "coconala": CoconalaAdapter(),
+}

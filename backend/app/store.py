@@ -1,0 +1,171 @@
+from datetime import datetime, timezone
+from typing import Any
+
+from app.db import supabase
+
+DEFAULT_CONTROL = {
+    "id": 1,
+    "enabled": False,
+    "platforms": {"crowdworks": True, "lancers": True, "coconala": True},
+    "record_all": True,
+}
+
+DEFAULT_BIDER = {
+    "id": 1,
+    "enabled": True,
+    "mode": "semi-auto",
+    "max_active_jobs": 1,
+    "max_queue_size": 100,
+    "delay_between_jobs": 5,
+    "auto_next": False,
+}
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def add_event(job_id: str, event: str, metadata: dict[str, Any] | None = None) -> None:
+    supabase().table("job_events").insert(
+        {"job_id": job_id, "event": event, "metadata": metadata or {}}
+    ).execute()
+
+
+def get_control() -> dict:
+    try:
+        res = supabase().table("scanner_control").select("*").eq("id", 1).limit(1).execute()
+        rows = res.data or []
+        if rows:
+            return rows[0]
+    except Exception:
+        pass
+    return dict(DEFAULT_CONTROL)
+
+
+def update_control(patch: dict) -> dict:
+    patch = {**patch, "updated_at": now_iso()}
+    res = supabase().table("scanner_control").update(patch).eq("id", 1).execute()
+    rows = res.data or []
+    return rows[0] if rows else {**get_control(), **patch}
+
+
+def get_bider_settings() -> dict:
+    try:
+        res = supabase().table("bider_settings").select("*").eq("id", 1).limit(1).execute()
+        rows = res.data or []
+        if rows:
+            return rows[0]
+    except Exception:
+        pass
+    return dict(DEFAULT_BIDER)
+
+
+def update_bider_settings(patch: dict) -> dict:
+    patch = {**patch, "updated_at": now_iso()}
+    res = supabase().table("bider_settings").update(patch).eq("id", 1).execute()
+    rows = res.data or []
+    return rows[0] if rows else {**get_bider_settings(), **patch}
+
+
+def list_sources() -> list[dict]:
+    try:
+        res = supabase().table("scanner_sources").select("*").order("created_at").execute()
+        return res.data or []
+    except Exception:
+        return []
+
+
+def get_source(source_id: str) -> dict | None:
+    res = supabase().table("scanner_sources").select("*").eq("id", source_id).limit(1).execute()
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+def insert_source(row: dict) -> dict:
+    res = supabase().table("scanner_sources").insert(row).execute()
+    return res.data[0]
+
+
+def update_source(source_id: str, patch: dict) -> dict:
+    patch = {**patch, "updated_at": now_iso()}
+    res = supabase().table("scanner_sources").update(patch).eq("id", source_id).execute()
+    return res.data[0]
+
+
+def delete_source(source_id: str) -> None:
+    supabase().table("scanner_sources").delete().eq("id", source_id).execute()
+
+
+def list_jobs(status: str | None = None, limit: int = 100) -> list[dict]:
+    try:
+        q = supabase().table("jobs").select("*").order("detected_at", desc=True).limit(limit)
+        if status:
+            q = q.eq("status", status)
+        return q.execute().data or []
+    except Exception:
+        return []
+
+
+def get_job(job_id: str) -> dict | None:
+    res = supabase().table("jobs").select("*").eq("id", job_id).limit(1).execute()
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+def find_job(platform: str, external_job_id: str | None, url: str) -> dict | None:
+    sb = supabase()
+    if external_job_id:
+        res = (
+            sb.table("jobs")
+            .select("*")
+            .eq("platform", platform)
+            .eq("external_job_id", external_job_id)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return res.data[0]
+    res = sb.table("jobs").select("*").eq("platform", platform).eq("url", url).limit(1).execute()
+    return (res.data or [None])[0]
+
+
+def insert_job(row: dict) -> dict:
+    res = supabase().table("jobs").insert(row).execute()
+    return res.data[0]
+
+
+def update_job(job_id: str, patch: dict) -> dict:
+    patch = {**patch, "updated_at": now_iso()}
+    res = supabase().table("jobs").update(patch).eq("id", job_id).execute()
+    return res.data[0]
+
+
+def queued_jobs(limit: int = 50) -> list[dict]:
+    try:
+        return (
+            supabase()
+            .table("jobs")
+            .select("*")
+            .eq("status", "QUEUED")
+            .order("detected_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return []
+
+
+def active_job_count() -> int:
+    try:
+        res = (
+            supabase()
+            .table("jobs")
+            .select("id", count="exact")
+            .in_("status", ["SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER"])
+            .execute()
+        )
+        return res.count or 0
+    except Exception:
+        return 0

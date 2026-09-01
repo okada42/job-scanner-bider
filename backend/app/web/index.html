@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Job Scanner</title>
+  <link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+  <div id="login" class="login">
+    <div class="card">
+      <h1>Job Scanner + Bider</h1>
+      <p>API トークンを入力してください</p>
+      <input id="token" type="password" placeholder="API_TOKEN" />
+      <button id="login-btn">Enter</button>
+      <p id="login-error" class="error"></p>
+    </div>
+  </div>
+
+  <div id="app" hidden>
+    <header>
+      <div>
+        <h1>JOB SCANNER</h1>
+        <p class="muted">Overall: <span id="overall-dot" class="pill">STOPPED</span></p>
+      </div>
+      <div class="row">
+        <button id="start-all">START ALL</button>
+        <button id="stop-all" class="ghost">STOP ALL</button>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="card" id="platforms"></article>
+      <article class="card">
+        <h2>Bider</h2>
+        <label>Mode
+          <select id="bider-mode">
+            <option value="auto">Auto</option>
+            <option value="semi-auto">Semi-auto</option>
+            <option value="paused">Paused</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="bider-enabled" /> Enabled</label>
+        <label>Max active <input type="number" id="max-active" min="1" /></label>
+        <label>Max queue <input type="number" id="max-queue" min="1" /></label>
+        <button id="save-bider">Save bider settings</button>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>Sources</h2>
+      <form id="add-source" class="add">
+        <input name="name" placeholder="Name (CrowdWorks #1)" />
+        <input name="url" placeholder="Public listing URL" required />
+        <input name="scan_interval" type="number" min="5" value="20" title="Scan interval (seconds)" placeholder="Interval (sec)" />
+        <input name="minimum_budget" type="number" placeholder="Min budget" />
+        <input name="keywords" placeholder="Keywords, comma separated" />
+        <input name="maximum_applications" type="number" placeholder="Max applications" />
+        <button type="submit">Add source</button>
+      </form>
+      <div id="sources"></div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Queue</h2>
+        <div id="queue"></div>
+      </article>
+      <article class="card grow">
+        <h2>Jobs</h2>
+        <div id="jobs"></div>
+      </article>
+    </section>
+  </div>
+  <script src="/assets/app.js"></script>
+</body>
+</html>
