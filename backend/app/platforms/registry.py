@@ -9,6 +9,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from app.platforms.base import ExtractedJob, PlatformAdapter
+from app.platforms.categories import crowdworks_category
 
 log = logging.getLogger("jobscanner.parse")
 
@@ -162,6 +163,15 @@ class CrowdWorksAdapter(PlatformAdapter):
                 continue
             jid = str(jid)
             client = wrap.get("client") if isinstance(wrap.get("client"), dict) else {}
+            entry = wrap.get("entry") if isinstance(wrap.get("entry"), dict) else {}
+            if entry.get("contest_entry") or entry.get("competition_entry"):
+                kind = "contest"
+            elif entry.get("task_entry"):
+                kind = "task"
+            else:
+                kind = "discuss"
+            category_id = offer.get("category_id")
+            _, tag = crowdworks_category(category_id, page_url)
             jobs[jid] = ExtractedJob(
                 platform=self.name,
                 external_job_id=jid,
@@ -170,6 +180,14 @@ class CrowdWorksAdapter(PlatformAdapter):
                 client=client.get("username") or client.get("name"),
                 budget=_cw_budget(wrap.get("payment") or offer.get("payment")),
                 deadline=str(offer.get("expired_on") or offer.get("deadline") or "") or None,
+                category=str(category_id) if category_id else tag,
+                extra={
+                    "description": offer.get("description_digest"),
+                    "category_id": category_id,
+                    "login_required": bool(offer.get("is_login_required")),
+                    "job_kind": kind,
+                    "tag": tag,
+                },
             )
         added = len(jobs) - before
         log.info("crowdworks vue-container offers=%s added=%s url=%s", len(offers), added, page_url)

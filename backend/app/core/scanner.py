@@ -69,6 +69,11 @@ def _item_dict(item) -> dict:
         "application_count",
         "category",
         "source_id",
+        "extra",
+        "description",
+        "job_kind",
+        "login_required",
+        "category_id",
     )
     return {k: getattr(item, k, None) for k in keys}
 
@@ -179,7 +184,18 @@ async def ingest_jobs(
         if job["status"] == "QUEUED":
             queued += 1
             add_event(job["id"], "QUEUED", {"reason": reason})
-            await notify_new_job(job)
+            extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+            await notify_new_job(
+                {
+                    **job,
+                    "description": item.get("description") or extra.get("description"),
+                    "job_kind": item.get("job_kind") or extra.get("job_kind"),
+                    "login_required": extra.get("login_required", item.get("login_required")),
+                    "category_id": extra.get("category_id") or item.get("category_id") or item.get("category"),
+                    "extra": extra,
+                    "source_url": (source or {}).get("url"),
+                }
+            )
             await hub.broadcast({"event": "NEW_JOB", "job": bider_payload(job)})
 
     stamp = {
