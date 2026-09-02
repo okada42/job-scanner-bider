@@ -184,20 +184,21 @@ async def ingest_jobs(
 
     stamp = {
         "last_error": None,
-        "last_job_count": len(items),
     }
-    if not items:
+    if items:
+        stamp["last_job_count"] = len(items)
+        stamp["last_scanned_at"] = datetime.now(timezone.utc).isoformat()
+    else:
         detail = parse_note or "parser returned no listings"
         if first_scan:
             stamp["last_error"] = (
                 f"First crawl parsed 0 jobs ({detail}). "
                 "Baseline not complete; existing listings will not be treated as new yet."
             )[:500]
+            stamp["last_job_count"] = 0
         else:
             stamp["last_error"] = f"Parsed 0 jobs ({detail})."[:500]
             stamp["last_scanned_at"] = datetime.now(timezone.utc).isoformat()
-    else:
-        stamp["last_scanned_at"] = datetime.now(timezone.utc).isoformat()
 
     if source:
         update_source(source["id"], stamp)

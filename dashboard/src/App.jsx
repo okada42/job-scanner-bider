@@ -258,7 +258,7 @@ export default function App() {
                   <span className="muted"> sec</span>
                 </td>
                 <td>{s.last_scanned_at ? new Date(s.last_scanned_at).toLocaleTimeString() : "—"}</td>
-                <td>{s.last_job_count ?? "—"}</td>
+                <td>{s.job_count ?? s.found ?? s.last_job_count ?? 0}</td>
                 <td className="actions">
                   <button
                     onClick={() =>

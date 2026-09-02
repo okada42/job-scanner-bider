@@ -80,6 +80,21 @@ def list_sources() -> list[dict]:
         return []
 
 
+def job_counts_by_source() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    try:
+        sb = supabase()
+        for source in list_sources():
+            sid = str(source.get("id") or "")
+            if not sid:
+                continue
+            res = sb.table("jobs").select("id", count="exact").eq("source_id", sid).limit(1).execute()
+            counts[sid] = int(res.count or 0)
+    except Exception:
+        return counts
+    return counts
+
+
 def get_source(source_id: str) -> dict | None:
     try:
         res = supabase().table("scanner_sources").select("*").eq("id", source_id).limit(1).execute()

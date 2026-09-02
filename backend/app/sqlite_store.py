@@ -291,6 +291,16 @@ def list_sources() -> list[dict]:
     return [_source_row(r) for r in rows]
 
 
+def job_counts_by_source() -> dict[str, int]:
+    conn = connect()
+    rows = conn.execute(
+        """select source_id, count(*) as n from jobs
+           where source_id is not null and source_id != ''
+           group by source_id"""
+    ).fetchall()
+    return {str(r["source_id"]): int(r["n"]) for r in rows if r["source_id"]}
+
+
 def get_source(source_id: str) -> dict | None:
     conn = connect()
     row = conn.execute("select * from scanner_sources where id = ?", (source_id,)).fetchone()

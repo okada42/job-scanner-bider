@@ -63,6 +63,17 @@ def test_first_crawl_records_existing_listings_without_queueing(db):
     assert refreshed["last_scanned_at"]
 
 
+def test_empty_later_crawl_keeps_last_job_count(db):
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    source = sqlite_store.get_source(db["id"])
+    assert source["last_job_count"] == 1
+    asyncio.run(ingest_jobs([], source=source, parse_note="html_bytes=12 vue-container=no"))
+    source = sqlite_store.get_source(db["id"])
+    assert source["last_job_count"] == 1
+    assert source["last_error"]
+    assert sqlite_store.job_counts_by_source()[db["id"]] == 1
+
+
 def test_later_crawl_queues_only_unseen_jobs(db):
     asyncio.run(ingest_jobs([_job("1"), _job("2")], source=db))
     source = sqlite_store.get_source(db["id"])

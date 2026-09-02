@@ -11,6 +11,7 @@ from app.store import (
     get_control,
     get_source,
     insert_source,
+    job_counts_by_source,
     list_sources,
     update_control,
     update_source,
@@ -23,18 +24,30 @@ async def _baseline_scan(source: dict) -> None:
     except Exception as exc:
         update_source(source["id"], {"last_error": str(exc)[:500]})
 
+def _sources_with_found() -> list[dict]:
+    sources = list_sources()
+    counts = job_counts_by_source()
+    out = []
+    for source in sources:
+        row = dict(source)
+        stored = int(counts.get(str(source.get("id")), 0) or 0)
+        row["job_count"] = stored
+        row["found"] = stored
+        out.append(row)
+    return out
+
+
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
 
 
 @router.get("/scanners")
 def scanners():
     control = get_control()
-    sources = list_sources()
     return {
         "control": control,
         "scheduler": scheduler_alive(),
         "platforms": {p: (control.get("platforms") or {}).get(p, True) for p in PLATFORMS},
-        "sources": sources,
+        "sources": _sources_with_found(),
     }
 
 
@@ -75,7 +88,7 @@ def stop_platform(platform: str):
 
 @router.get("/sources")
 def sources():
-    return list_sources()
+    return _sources_with_found()
 
 
 @router.post("/sources")
