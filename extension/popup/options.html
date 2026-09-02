@@ -3,14 +3,30 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      body { font: 14px/1.4 sans-serif; margin: 16px; max-width: 480px; }
-      input { width: 100%; margin: 6px 0 12px; padding: 8px; }
+      body { font: 14px/1.4 sans-serif; margin: 16px; max-width: 520px; }
+      input[type="text"], input[type="password"], input[type="url"] { width: 100%; margin: 6px 0 12px; padding: 8px; }
+      label.toggle { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+      .note { color: #444; font-size: 13px; background: #f4f4f4; padding: 10px 12px; margin: 12px 0; }
+      h3 { margin-bottom: 8px; }
     </style>
   </head>
   <body>
-    <h3>Job Bider settings</h3>
-    <label>Backend URL <input id="backendUrl" /></label>
+    <h3>Job Scanner + Bider settings</h3>
+    <label>Backend URL <input id="backendUrl" type="url" /></label>
     <label>API token <input id="token" type="password" /></label>
+    <label class="toggle">
+      <input type="checkbox" id="scanEnabled" />
+      Enable scan
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="applyEnabled" />
+      Enable apply (Bider)
+    </label>
+    <div class="note">
+      <p><strong>Search Chrome profile:</strong> Enable scan ON, Enable apply OFF. Stay logged in on CrowdWorks / Lancers / Coconala. The extension fetches listing URLs with this profile’s cookies and POSTs jobs to Railway. Railway never stores platform passwords.</p>
+      <p><strong>Apply Chrome profile:</strong> Enable scan OFF, Enable apply ON. Opens queued jobs from the shared Railway queue. Does not scan. Never auto-submits.</p>
+      <p><strong>Alarm interval:</strong> Dashboard source intervals are honored as much as Manifest V3 allows. Chrome alarms usually fire at most every 30 seconds (unpacked) or 1 minute (packed). A 20s dashboard interval therefore becomes ~30s–1min, not 20s. Per-source last-run in extension storage still skips a source until its interval has elapsed.</p>
+    </div>
     <button id="save">Save</button>
     <script src="options.js"></script>
   </body>

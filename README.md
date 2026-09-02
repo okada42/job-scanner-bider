@@ -2,10 +2,10 @@
 
 Single-user job monitor and application **preparation** assistant.
 
-- **Scanner** watches public listing URLs you add (CrowdWorks, Lancers, Coconala).
-- **FastAPI** stores jobs in **Supabase**, filters them, and notifies **Discord**.
-- **Dashboard** starts/stops scanners and sets **scan interval per source**.
-- **Chrome extension** opens a queued job and prepares the proposal page. It never submits.
+- **Scanner** watches listing URLs you add (CrowdWorks, Lancers, Coconala). Login-required pages are fetched by the Chrome extension using that browser’s cookies. Railway never stores platform passwords.
+- **FastAPI** stores jobs in **Supabase**, filters them, and notifies **Discord**. New jobs also arrive via `POST /api/jobs/ingest` (`X-API-Token`).
+- **Dashboard** starts/stops the optional Railway HTML scanner and sets **scan interval per source**.
+- **Chrome extension** (one install, two toggles): **Enable scan** and **Enable apply (Bider)**. It never submits.
 
 There is no Google Sheets integration.
 
@@ -44,6 +44,7 @@ Variables (same names as `.env.example`; never commit real values):
 | `DISCORD_WEBHOOK_URL` | yes for Discord alerts |
 | `API_TOKEN` | yes |
 | `SCAN_INTERVAL_SECONDS` | optional, default `20` |
+| `SCAN_MODE` | optional, `html` (default) or `extension`. `extension` skips Railway’s automatic anonymous HTML fetch; jobs still arrive from the extension ingest API. |
 
 After deploy, copy the backend **public URL** (for example `https://<service>.up.railway.app`) with **no trailing slash**. That URL is what Netlify (`VITE_API_URL`) and the Chrome extension must call.
 
@@ -73,10 +74,24 @@ Redeploy the Netlify site after changing `VITE_API_URL`. After a CORS change, wa
 
 ## Chrome extension (local, not Netlify)
 
+Use **two Chrome profiles**, same unpacked extension, opposite toggles.
+
+| Profile | Enable scan | Enable apply (Bider) | Role |
+| --- | --- | --- | --- |
+| **Search** | ON | OFF | Stay logged in on CrowdWorks / Lancers / Coconala. The extension `fetch`es listing URLs with this profile’s cookies (does not navigate your tabs) and POSTs jobs to `/api/jobs/ingest`. |
+| **Apply** | OFF | ON | Opens queued jobs from the shared Railway queue and prepares the proposal page. Does not scan. Never submits. |
+
+Defaults: both toggles **off**. Turn them on per profile after you set Backend URL + token.
+
 1. Open `chrome://extensions` → enable Developer mode → **Load unpacked** → select `extension/`.
 2. Open the extension options and set:
    - Backend URL: Railway public URL (`https`, no trailing slash) — or `http://127.0.0.1:8000` for local backend
    - Token: the same `API_TOKEN` as the backend
+   - The two toggles as in the table above
+
+The search profile **must stay logged in**. Railway’s HTML GET is anonymous; if the search session expires, ingest will see login pages and find no jobs.
+
+**Alarm interval:** dashboard source intervals are honored as much as Manifest V3 allows. `chrome.alarms` typically cannot fire faster than **30 seconds** (unpacked) or **1 minute** (packed). A 20s dashboard interval therefore becomes ~30s–1min, not 20s. The extension also stores per-source last-run times and will not fetch a source again until its interval has elapsed.
 
 `host_permissions` already include `https://*.up.railway.app/*`. For a custom domain, add that origin to `extension/manifest.json` and reload.
 

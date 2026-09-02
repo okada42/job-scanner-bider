@@ -3,13 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      body { font: 13px/1.4 sans-serif; width: 240px; margin: 12px; }
+      body { font: 13px/1.4 sans-serif; width: 280px; margin: 12px; }
       button { width: 100%; margin: 4px 0; padding: 8px; }
+      label.toggle { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+      .hint { color: #555; font-size: 11px; margin: 8px 0 12px; }
+      .scan { color: #333; font-size: 11px; min-height: 1.4em; }
     </style>
   </head>
   <body>
-    <strong>JOB BIDER</strong>
+    <strong>JOB SCANNER + BIDER</strong>
+    <label class="toggle">
+      <input type="checkbox" id="scanEnabled" />
+      Enable scan
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="applyEnabled" />
+      Enable apply (Bider)
+    </label>
+    <p class="hint">Search profile: scan on, apply off. Apply profile: scan off, apply on. Stay logged in on the search profile.</p>
     <div id="status">…</div>
+    <div class="scan" id="scanStatus"></div>
     <button id="start">START</button>
     <button id="pause">PAUSE</button>
     <button id="resume">RESUME</button>

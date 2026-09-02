@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 
+from app.config import settings
 from app.core.scanner import scan_source
 from app.store import get_control, list_sources, update_source
 
@@ -19,7 +20,8 @@ async def _loop() -> None:
         while _running:
             try:
                 control = await asyncio.to_thread(get_control)
-                if control.get("enabled"):
+                html_scan = (settings.scan_mode or "html").lower() != "extension"
+                if html_scan and control.get("enabled"):
                     platforms = control.get("platforms") or {}
                     now = datetime.now(timezone.utc)
                     for source in await asyncio.to_thread(list_sources):

@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import require_token
-from app.core.scanner import bider_payload, claim_next_job
+from app.core.scanner import bider_payload, claim_next_job, ingest_jobs
 from app.db import JOB_STATUSES
 from app.integrations.hub import hub
-from app.schemas import JobStatusUpdate
-from app.store import add_event, get_job, list_jobs, queued_jobs, update_job
+from app.schemas import JobIngestRequest, JobStatusUpdate
+from app.store import add_event, get_job, get_source, list_jobs, queued_jobs, update_job
 
 router = APIRouter(prefix="/api/jobs", dependencies=[Depends(require_token)])
 
@@ -26,6 +26,16 @@ def next_job():
     if not job:
         return {"job": None}
     return {"job": bider_payload(job)}
+
+
+@router.post("/ingest")
+async def ingest(body: JobIngestRequest):
+    source = None
+    if body.source_id:
+        source = get_source(str(body.source_id))
+        if not source:
+            raise HTTPException(404, "Source not found")
+    return await ingest_jobs(body.jobs, source=source)
 
 
 @router.get("/{job_id}")

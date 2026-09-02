@@ -82,6 +82,10 @@ export default function App() {
         <div>
           <h1>JOB SCANNER</h1>
           <p className="muted">Queue lives in Supabase. Discord alerts on match. Interval is per source.</p>
+          <p className="muted">
+            Login-required listings should be scanned by the Chrome extension on a logged-in search
+            profile. Railway&apos;s HTML GET is anonymous and will not see those pages.
+          </p>
         </div>
         <div className="overall">
           <span className={`dot ${control?.enabled ? "on" : "off"}`} />

@@ -70,3 +70,13 @@ class JobMeta(BaseModel):
     application_count: int | None = None
     category: str | None = None
     detected_at: datetime | None = None
+    source_id: str | None = None
+
+
+class JobIngestItem(JobMeta):
+    pass
+
+
+class JobIngestRequest(BaseModel):
+    jobs: list[JobIngestItem] = Field(default_factory=list)
+    source_id: str | None = None

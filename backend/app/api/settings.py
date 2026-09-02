@@ -20,6 +20,7 @@ def settings_get():
         "scanner": get_control(),
         "bider": get_bider_settings(),
         "default_scan_interval": settings.scan_interval_seconds,
+        "scan_mode": settings.scan_mode,
     }
 
 

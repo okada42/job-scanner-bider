@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Job Bider",
-  "version": "0.1.0",
-  "description": "Prepares job applications. Never submits.",
+  "name": "Job Scanner + Bider",
+  "version": "0.2.0",
+  "description": "Scans listings from a logged-in profile and prepares applications. Never submits.",
   "permissions": ["storage", "sidePanel", "tabs", "alarms", "notifications"],
   "host_permissions": [
     "http://localhost:8000/*",

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     discord_webhook_url: str = ""
     api_token: str
     scan_interval_seconds: int = 20
+    # html = Railway fetches listing pages (anonymous). extension = skip that loop; use POST /api/jobs/ingest.
+    scan_mode: str = "html"
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
 
