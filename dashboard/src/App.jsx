@@ -125,7 +125,8 @@ export default function App() {
       <section className="card">
         <h2>Bad clients</h2>
         <p className="muted">
-          Add client names to skip. New jobs whose client contains any of these names are stored as
+          Paste several client names at once. Separate them with a new line or a comma — you do not
+          need Enter for each name. New jobs whose client contains any of these names are stored as
           seen but never queued or sent to Discord.
         </p>
         <BadClientInbox
@@ -390,26 +391,52 @@ function Queue({ jobs }) {
   );
 }
 
+function splitClientNames(text) {
+  const seen = new Set();
+  const out = [];
+  for (const part of String(text || "").split(/[\n\r,;、，\t]+/)) {
+    const name = part.trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
 function BadClientInbox({ names, onChange }) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function addName(e) {
-    e.preventDefault();
-    const name = draft.trim();
-    if (!name) return;
-    const exists = names.some((n) => n.toLowerCase() === name.toLowerCase());
-    if (exists) {
+  async function addNames(incoming) {
+    const parsed = splitClientNames(Array.isArray(incoming) ? incoming.join("\n") : incoming);
+    if (!parsed.length) return;
+    const have = new Set(names.map((n) => n.toLowerCase()));
+    const extra = parsed.filter((n) => !have.has(n.toLowerCase()));
+    if (!extra.length) {
       setDraft("");
       return;
     }
     setBusy(true);
     try {
-      await onChange([...names, name]);
+      await onChange([...names, ...extra]);
       setDraft("");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    await addNames(draft);
+  }
+
+  function onPaste(e) {
+    const text = e.clipboardData?.getData("text") || "";
+    const parsed = splitClientNames(text);
+    if (parsed.length < 2) return;
+    e.preventDefault();
+    addNames(parsed);
   }
 
   async function removeName(name) {
@@ -424,7 +451,7 @@ function BadClientInbox({ names, onChange }) {
   return (
     <div className="inbox">
       <div className="chips">
-        {names.length === 0 && <p className="muted">No names yet. Add one below.</p>}
+        {names.length === 0 && <p className="muted">No names yet. Paste a list below.</p>}
         {names.map((name) => (
           <span className="chip" key={name}>
             {name}
@@ -434,14 +461,16 @@ function BadClientInbox({ names, onChange }) {
           </span>
         ))}
       </div>
-      <form className="inbox-add" onSubmit={addName}>
-        <input
+      <form className="inbox-add" onSubmit={onSubmit}>
+        <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Bad client name"
+          onPaste={onPaste}
+          placeholder={"NORTH inc.\nクラウドワークス テック\nAcme"}
           disabled={busy}
+          rows={4}
         />
-        <button type="submit" disabled={busy || !draft.trim()}>
+        <button type="submit" disabled={busy || splitClientNames(draft).length === 0}>
           Add
         </button>
       </form>

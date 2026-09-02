@@ -83,7 +83,18 @@ th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line
   border-radius: 999px;
   color: var(--muted);
 }
-.inbox-add { display: grid; grid-template-columns: 1fr auto; gap: 8px; max-width: 520px; }
+.inbox-add {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  max-width: 640px;
+  align-items: end;
+}
+.inbox-add textarea {
+  min-height: 88px;
+  resize: vertical;
+  line-height: 1.4;
+}
 
 @media (max-width: 960px) {
   .grid3, .split, .add { grid-template-columns: 1fr; }
