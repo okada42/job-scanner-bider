@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.auth import require_token
 from app.core.scanner import scan_source
@@ -15,6 +15,13 @@ from app.store import (
     update_control,
     update_source,
 )
+
+
+async def _baseline_scan(source: dict) -> None:
+    try:
+        await scan_source(source)
+    except Exception as exc:
+        update_source(source["id"], {"last_error": str(exc)[:500]})
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
 
@@ -72,7 +79,7 @@ def sources():
 
 
 @router.post("/sources")
-def create_source(body: SourceCreate):
+def create_source(body: SourceCreate, background_tasks: BackgroundTasks):
     detected = detect_platform(str(body.url))
     if detected and detected != body.platform:
         raise HTTPException(400, f"URL looks like {detected}, not {body.platform}")
@@ -84,7 +91,9 @@ def create_source(body: SourceCreate):
         "scan_interval": max(5, body.scan_interval),
         "rules": body.rules.model_dump(),
     }
-    return insert_source(row)
+    created = insert_source(row)
+    background_tasks.add_task(_baseline_scan, created)
+    return created
 
 
 @router.patch("/sources/{source_id}")

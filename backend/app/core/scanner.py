@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.core.fetch import fetch_html
-from app.core.rules import job_matches
+from app.core.rules import client_is_excluded, job_matches
 from app.integrations.discord import notify_new_job
 from app.integrations.hub import hub
 from app.platforms.registry import ADAPTERS
@@ -9,6 +9,7 @@ from app.store import (
     add_event,
     find_job,
     get_bider_settings,
+    get_control,
     get_source,
     insert_job,
     queued_jobs,
@@ -49,11 +50,25 @@ def _item_dict(item) -> dict:
     return {k: getattr(item, k, None) for k in keys}
 
 
-async def ingest_jobs(items: list, *, source: dict | None = None) -> dict:
-    """Shared insert / dedupe / rules / Discord / queue path for HTML scan and extension ingest."""
+def is_first_scan(source: dict | None) -> bool:
+    return bool(source) and not source.get("last_scanned_at")
+
+
+async def ingest_jobs(items: list, *, source: dict | None = None, baseline: bool | None = None) -> dict:
+    """Crawl ingest: remember every job id, alert only on listings never stored before.
+
+    First successful parse of a source is a baseline: jobs already on the page are
+    stored as seen and ignored (no Discord, no bider queue). Later crawls treat a
+    job as new only if (platform, external_job_id) or URL is not already in the DB.
+    """
     created = 0
     queued = 0
+    baselined = 0
+    skipped_seen = 0
+    skipped_bad_client = 0
+    first_scan = is_first_scan(source) if baseline is None else baseline
     settings = get_bider_settings()
+    excluded_clients = (get_control() or {}).get("excluded_clients") or []
     max_queue = int(settings.get("max_queue_size") or 100)
     default_source_id = source["id"] if source else None
     default_rules = (source or {}).get("rules") or {}
@@ -80,6 +95,7 @@ async def ingest_jobs(items: list, *, source: dict | None = None) -> dict:
             if extra is not None:
                 rules = extra.get("rules") or {}
         if find_job(platform, str(external_id), url):
+            skipped_seen += 1
             continue
         row = {
             "platform": platform,
@@ -97,6 +113,27 @@ async def ingest_jobs(items: list, *, source: dict | None = None) -> dict:
         }
         if sid:
             row["source_id"] = str(sid)
+
+        if first_scan:
+            try:
+                job = insert_job(row)
+            except Exception:
+                continue
+            created += 1
+            baselined += 1
+            add_event(job["id"], "BASELINE", {"reason": "already_listed_on_first_crawl"})
+            continue
+
+        if client_is_excluded(row.get("client"), excluded_clients):
+            try:
+                job = insert_job(row)
+            except Exception:
+                continue
+            created += 1
+            skipped_bad_client += 1
+            add_event(job["id"], "SKIPPED", {"reason": "bad_client", "client": row.get("client")})
+            continue
+
         matched, reason = job_matches(row, rules)
         row["matched"] = matched
         if matched and len(queued_jobs(max_queue)) < max_queue:
@@ -114,10 +151,17 @@ async def ingest_jobs(items: list, *, source: dict | None = None) -> dict:
             await hub.broadcast({"event": "NEW_JOB", "job": bider_payload(job)})
 
     stamp = {
-        "last_scanned_at": datetime.now(timezone.utc).isoformat(),
         "last_error": None,
         "last_job_count": len(items),
     }
+    if first_scan and not items:
+        stamp["last_error"] = (
+            "First crawl parsed 0 jobs (login wall or empty listing). "
+            "Baseline not complete; existing listings will not be treated as new yet."
+        )
+    else:
+        stamp["last_scanned_at"] = datetime.now(timezone.utc).isoformat()
+
     if source:
         update_source(source["id"], stamp)
     else:
@@ -125,7 +169,15 @@ async def ingest_jobs(items: list, *, source: dict | None = None) -> dict:
             if get_source(sid):
                 update_source(sid, stamp)
 
-    return {"found": len(items), "created": created, "queued": queued}
+    return {
+        "found": len(items),
+        "created": created,
+        "queued": queued,
+        "baselined": baselined,
+        "skipped_seen": skipped_seen,
+        "skipped_bad_client": skipped_bad_client,
+        "baseline": first_scan,
+    }
 
 
 async def scan_source(source: dict) -> dict:

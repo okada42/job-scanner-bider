@@ -2,7 +2,7 @@
 
 Single-user job monitor and application **preparation** assistant.
 
-- **Scanner** watches listing URLs you add (CrowdWorks, Lancers, Coconala). Login-required pages are fetched by the Chrome extension using that browser’s cookies. Railway never stores platform passwords.
+- **Scanner** crawls listing-search URLs you add (CrowdWorks, Lancers, Coconala). The **first successful crawl is a baseline**: every job already on that page is stored as seen and ignored. After that, only jobs that are **not** already in the jobs table (Supabase, or local SQLite when Supabase is unset) are treated as new. Login-required pages still need the Chrome extension (browser cookies). The backend never stores platform passwords. There is no Google Sheets integration.
 - **FastAPI** stores jobs in **Supabase**, filters them, and notifies **Discord**. New jobs also arrive via `POST /api/jobs/ingest` (`X-API-Token`).
 - **Dashboard** starts/stops the optional Railway HTML scanner and sets **scan interval per source**.
 - **Chrome extension** (one install, two toggles): **Enable scan** and **Enable apply (Bider)**. It never submits.
@@ -142,3 +142,14 @@ Same as above, with Backend URL `http://127.0.0.1:8000` while developing against
 ## Safety
 
 The Bider must not generate proposals, click final submit, or bypass CAPTCHA / anti-bot. Scan interval defaults to 20s per source and is editable on the dashboard. Raise it if a platform rate-limits.
+
+## How “new job” is decided
+
+1. You paste a **search-results URL** on the dashboard (not a single job page).
+2. The backend `GET`s that URL, parses job cards (id + URL) for CrowdWorks `/public/jobs/{id}`, Lancers `/work/detail/{id}`, and Coconala `/requests/{id}`.
+3. **First crawl** with at least one parsed job: write those ids into the jobs table as `RECORDED` / `BASELINE`. No Discord. No bider queue. Those listings already existed when monitoring started.
+4. **Later crawls:** skip any job whose `(platform, external_job_id)` or URL is already stored. A job that is **not** in the database is a new posting — apply keyword/budget rules and the **Bad clients** inbox, then queue + Discord.
+5. **Bad clients:** names you add on the dashboard. If a new job’s client contains any of those names, it is stored as seen and skipped (no queue, no Discord).
+5. If the first crawl parses **zero** jobs (login wall or empty page), the baseline is **not** marked complete, so a later successful parse is not treated as a flood of “new” jobs.
+
+Without real `SUPABASE_*` values the backend uses a local SQLite file at `data/job-scanner.db`.

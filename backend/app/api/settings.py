@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.auth import require_token
+from app.core.rules import normalize_client_names
 from app.schemas import BiderSettingsUpdate, LoginBody, ScannerControlUpdate
 from app.config import settings
 from app.store import get_bider_settings, get_control, update_bider_settings, update_control
@@ -33,4 +34,6 @@ def settings_put(body: BiderSettingsUpdate):
 @router.put("/settings/scanner", dependencies=[Depends(require_token)])
 def scanner_settings_put(body: ScannerControlUpdate):
     patch = body.model_dump(exclude_none=True)
+    if "excluded_clients" in patch:
+        patch["excluded_clients"] = normalize_client_names(patch["excluded_clients"])
     return update_control(patch)

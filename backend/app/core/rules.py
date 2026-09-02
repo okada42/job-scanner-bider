@@ -23,10 +23,34 @@ def parse_budget_bounds(text: str | None) -> tuple[int | None, int | None]:
     return min(nums), max(nums)
 
 
+def normalize_client_names(names: list[str] | None) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in names or []:
+        name = str(raw or "").strip()
+        key = name.lower()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        out.append(name)
+    return out
+
+
+def client_is_excluded(client: str | None, names: list[str] | None) -> bool:
+    hay = (client or "").strip().lower()
+    if not hay:
+        return False
+    for name in normalize_client_names(names):
+        needle = name.lower()
+        if needle and needle in hay:
+            return True
+    return False
+
+
 def job_matches(job: dict, rules: Rules | dict | None) -> tuple[bool, str]:
-    if not rules:
-        return True, "no_rules"
-    data = rules if isinstance(rules, dict) else rules.model_dump()
+    data = {} if not rules else (rules if isinstance(rules, dict) else rules.model_dump())
+    if client_is_excluded(job.get("client"), data.get("excluded_clients")):
+        return False, "bad_client"
     title = (job.get("title") or "") + " " + (job.get("client") or "")
     keywords = [k for k in (data.get("keywords") or []) if k]
     if keywords and not any(k.lower() in title.lower() for k in keywords):

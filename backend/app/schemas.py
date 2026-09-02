@@ -53,6 +53,7 @@ class ScannerControlUpdate(BaseModel):
     enabled: bool | None = None
     platforms: dict[str, bool] | None = None
     record_all: bool | None = None
+    excluded_clients: list[str] | None = None
 
 
 class LoginBody(BaseModel):

@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import connect_postgres, redact_error, supabase
 
-SQL = Path(__file__).resolve().parents[2] / "supabase" / "migrations" / "001_init.sql"
+MIGRATIONS = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
 
 
 def split_sql(sql: str) -> list[str]:
@@ -31,7 +31,7 @@ def split_sql(sql: str) -> list[str]:
 def schema_ready() -> bool:
     try:
         sb = supabase()
-        sb.table("scanner_control").select("id").eq("id", 1).limit(1).execute()
+        sb.table("scanner_control").select("id,excluded_clients").eq("id", 1).limit(1).execute()
         sb.table("bider_settings").select("id").eq("id", 1).limit(1).execute()
         sb.table("scanner_sources").select("id").limit(1).execute()
         sb.table("jobs").select("id").limit(1).execute()
@@ -48,8 +48,11 @@ def seed_via_supabase() -> None:
 
 
 def apply_via_postgres() -> None:
-    statements = split_sql(SQL.read_text(encoding="utf-8"))
-    print(f"Connecting and applying {len(statements)} SQL statements...")
+    files = sorted(MIGRATIONS.glob("*.sql"))
+    statements: list[str] = []
+    for path in files:
+        statements.extend(split_sql(path.read_text(encoding="utf-8")))
+    print(f"Connecting and applying {len(statements)} SQL statements from {len(files)} files...")
     with connect_postgres() as conn:
         conn.autocommit = True
         for stmt in statements:
@@ -77,7 +80,7 @@ def main() -> None:
             print("Schema already present (verified via supabase-py).")
         return
 
-    print("Tables missing. Trying Postgres (pooler, then direct)...")
+    print("Tables or excluded_clients column missing. Trying Postgres...")
     pg_error = None
     try:
         apply_via_postgres()
@@ -106,7 +109,7 @@ def main() -> None:
 
     print("Migration failed.")
     print(f"Postgres: {pg_error}")
-    print("App can still start; apply supabase/migrations/001_init.sql in the Supabase SQL editor.")
+    print("App can still start; apply supabase/migrations/*.sql in the Supabase SQL editor.")
     sys.exit(0)
 
 

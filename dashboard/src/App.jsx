@@ -81,10 +81,13 @@ export default function App() {
       <header>
         <div>
           <h1>JOB SCANNER</h1>
-          <p className="muted">Queue lives in Supabase. Discord alerts on match. Interval is per source.</p>
           <p className="muted">
-            Login-required listings should be scanned by the Chrome extension on a logged-in search
-            profile. Railway&apos;s HTML GET is anonymous and will not see those pages.
+            Add a search-results URL. The first crawl stores every listing already on that page as
+            seen (no Discord, no queue). Later crawls only queue jobs that were never stored before.
+          </p>
+          <p className="muted">
+            The backend fetches the URL on each interval. Login-walled pages still need the Chrome
+            extension on a logged-in search profile; an anonymous GET cannot see those jobs.
           </p>
         </div>
         <div className="overall">
@@ -116,6 +119,25 @@ export default function App() {
             </button>
           </article>
         ))}
+      </section>
+
+      <section className="card">
+        <h2>Bad clients</h2>
+        <p className="muted">
+          Add client names to skip. New jobs whose client contains any of these names are stored as
+          seen but never queued or sent to Discord.
+        </p>
+        <BadClientInbox
+          names={control?.excluded_clients || []}
+          onChange={async (names) => {
+            setError("");
+            await api("/api/settings/scanner", {
+              method: "PUT",
+              body: JSON.stringify({ excluded_clients: names }),
+            });
+            refresh();
+          }}
+        />
       </section>
 
       <section className="card">
@@ -154,7 +176,7 @@ export default function App() {
               </option>
             ))}
           </select>
-          <input placeholder="Public listing URL" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} required />
+          <input placeholder="Search results URL (not a single job page)" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} required />
           <input placeholder="Name (optional)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           <label>
             Interval (sec)
@@ -336,6 +358,65 @@ function Queue({ jobs }) {
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+function BadClientInbox({ names, onChange }) {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function addName(e) {
+    e.preventDefault();
+    const name = draft.trim();
+    if (!name) return;
+    const exists = names.some((n) => n.toLowerCase() === name.toLowerCase());
+    if (exists) {
+      setDraft("");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onChange([...names, name]);
+      setDraft("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeName(name) {
+    setBusy(true);
+    try {
+      await onChange(names.filter((n) => n !== name));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="inbox">
+      <div className="chips">
+        {names.length === 0 && <p className="muted">No names yet. Add one below.</p>}
+        {names.map((name) => (
+          <span className="chip" key={name}>
+            {name}
+            <button type="button" className="chip-x" disabled={busy} onClick={() => removeName(name)} aria-label={`Remove ${name}`}>
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <form className="inbox-add" onSubmit={addName}>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Bad client name"
+          disabled={busy}
+        />
+        <button type="submit" disabled={busy || !draft.trim()}>
+          Add
+        </button>
+      </form>
     </div>
   );
 }
