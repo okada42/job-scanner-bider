@@ -28,7 +28,7 @@ export default function App() {
   async function refresh() {
     const scanners = await api("/api/scanners");
     const settings = await api("/api/settings");
-    const jobList = await api("/api/jobs?limit=80");
+    const jobList = await api("/api/jobs?limit=80&new_only=true");
     setData(scanners);
     setBider(settings.bider);
     setJobs(jobList);
@@ -367,6 +367,7 @@ export default function App() {
         </article>
         <article className="card grow">
           <h2>Jobs</h2>
+          <p className="muted">Only new listings after the first crawl. Baseline jobs stay hidden.</p>
           <table>
             <thead>
               <tr>
@@ -378,7 +379,14 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {jobs.map((j) => (
+              {jobs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="empty">
+                    No new jobs yet. The first crawl is stored as baseline and stays hidden here.
+                  </td>
+                </tr>
+              ) : (
+                jobs.map((j) => (
                 <tr key={j.id}>
                   <td>
                     <span className={`pill ${j.status === "QUEUED" ? "on" : ""}`}>{j.status}</span>
@@ -407,7 +415,8 @@ export default function App() {
                     </button>
                   </td>
                 </tr>
-              ))}
+              ))
+              )}
             </tbody>
           </table>
         </article>

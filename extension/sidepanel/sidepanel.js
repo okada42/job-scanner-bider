@@ -30,7 +30,7 @@ async function paint() {
   }
   const jobs = listed.jobs || [];
   if (!jobs.length) {
-    box.textContent = "No jobs in the database yet.";
+    box.textContent = "No new jobs yet.";
     return;
   }
   box.innerHTML = jobs

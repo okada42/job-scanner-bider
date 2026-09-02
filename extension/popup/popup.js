@@ -56,7 +56,7 @@ async function refresh() {
   const jobs = listed.jobs || [];
   if (!jobs.length) {
     box.className = "empty";
-    box.textContent = "No jobs in the database yet.";
+    box.textContent = "No new jobs yet.";
     return;
   }
   box.className = "";

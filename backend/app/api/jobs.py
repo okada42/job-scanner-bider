@@ -11,8 +11,12 @@ router = APIRouter(prefix="/api/jobs", dependencies=[Depends(require_token)])
 
 
 @router.get("")
-def jobs(status: str | None = None, limit: int = Query(default=100, le=500)):
-    return list_jobs(status=status, limit=limit)
+def jobs(
+    status: str | None = None,
+    limit: int = Query(default=100, le=500),
+    new_only: bool = Query(default=True),
+):
+    return list_jobs(status=status, limit=limit, new_only=new_only)
 
 
 @router.get("/pending")

@@ -170,12 +170,32 @@ def delete_source(source_id: str) -> None:
     supabase().table("scanner_sources").delete().eq("id", source_id).execute()
 
 
-def list_jobs(status: str | None = None, limit: int = 100) -> list[dict]:
+def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = False) -> list[dict]:
     try:
-        q = supabase().table("jobs").select("*").order("detected_at", desc=True).limit(limit)
+        sb = supabase()
+        q = sb.table("jobs").select("*").order("detected_at", desc=True)
         if status:
             q = q.eq("status", status)
-        return q.execute().data or []
+        if new_only:
+            baseline_ids: list[str] = []
+            start = 0
+            page = 1000
+            while True:
+                ev = (
+                    sb.table("job_events")
+                    .select("job_id")
+                    .eq("event", "BASELINE")
+                    .range(start, start + page - 1)
+                    .execute()
+                )
+                rows = ev.data or []
+                baseline_ids.extend(str(row["job_id"]) for row in rows if row.get("job_id"))
+                if len(rows) < page:
+                    break
+                start += page
+            if baseline_ids:
+                q = q.not_.in_("id", baseline_ids)
+        return q.limit(limit).execute().data or []
     except Exception:
         return []
 

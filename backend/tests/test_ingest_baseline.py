@@ -93,6 +93,14 @@ def test_later_crawl_queues_only_unseen_jobs(db):
     assert jobs["1"]["status"] == "RECORDED"
 
 
+def test_list_jobs_new_only_hides_baseline(db):
+    asyncio.run(ingest_jobs([_job("1"), _job("2")], source=db))
+    source = sqlite_store.get_source(db["id"])
+    asyncio.run(ingest_jobs([_job("1"), _job("2"), _job("3")], source=source))
+    assert {j["external_job_id"] for j in sqlite_store.list_jobs()} == {"1", "2", "3"}
+    assert {j["external_job_id"] for j in sqlite_store.list_jobs(new_only=True)} == {"3"}
+
+
 def test_empty_first_crawl_does_not_complete_baseline(db):
     result = asyncio.run(ingest_jobs([], source=db))
     assert result["baseline"] is True

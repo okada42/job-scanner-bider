@@ -51,6 +51,7 @@ button.danger { color: #ffd0d0; }
 .add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.empty { color: var(--muted); }
 .url { display: block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .narrow { width: 72px; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; }

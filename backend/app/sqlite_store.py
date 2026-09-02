@@ -402,15 +402,23 @@ def delete_source(source_id: str) -> None:
         conn.commit()
 
 
-def list_jobs(status: str | None = None, limit: int = 100) -> list[dict]:
+def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = False) -> list[dict]:
     conn = connect()
+    extra = ""
+    if new_only:
+        extra = """and not exists (
+            select 1 from job_events e where e.job_id = jobs.id and e.event = 'BASELINE'
+        )"""
     if status:
         rows = conn.execute(
-            "select * from jobs where status = ? order by detected_at desc limit ?",
-            (status, limit),
+            f"select * from jobs where status = ? {extra} order by detected_at desc limit ?",
+            (status, int(limit)),
         ).fetchall()
     else:
-        rows = conn.execute("select * from jobs order by detected_at desc limit ?", (limit,)).fetchall()
+        rows = conn.execute(
+            f"select * from jobs where 1=1 {extra} order by detected_at desc limit ?",
+            (int(limit),),
+        ).fetchall()
     return [_job_row(r) for r in rows]
 
 
