@@ -77,16 +77,21 @@ def test_found_counts_jobs_recorded_today_then_resets(db, monkeypatch):
     asyncio.run(ingest_jobs([_job("1"), _job("2")], source=db))
     sid = db["id"]
     today = local_day_start_iso()
-    assert sqlite_store.job_counts_since_by_source(today)[sid] == 2
-
-    yesterday = datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat()
-    conn = sqlite_store.connect()
-    conn.execute("update jobs set created_at = ? where source_id = ?", (yesterday, sid))
-    conn.commit()
+    # First crawl is a baseline: those listings do not count as Found today.
     assert sqlite_store.job_counts_since_by_source(today).get(sid, 0) == 0
 
     source = sqlite_store.get_source(sid)
     asyncio.run(ingest_jobs([_job("1"), _job("2"), _job("3")], source=source))
+    assert sqlite_store.job_counts_since_by_source(today)[sid] == 1
+
+    yesterday = datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat()
+    conn = sqlite_store.connect()
+    conn.execute("update jobs set created_at = ? where external_job_id = ?", (yesterday, "3"))
+    conn.commit()
+    assert sqlite_store.job_counts_since_by_source(today).get(sid, 0) == 0
+
+    source = sqlite_store.get_source(sid)
+    asyncio.run(ingest_jobs([_job("4")], source=source))
     assert sqlite_store.job_counts_since_by_source(today)[sid] == 1
 
     monkeypatch.setattr(scanners_mod, "job_counts_by_source", sqlite_store.job_counts_by_source)
@@ -94,4 +99,4 @@ def test_found_counts_jobs_recorded_today_then_resets(db, monkeypatch):
     monkeypatch.setattr(scanners_mod, "list_sources", sqlite_store.list_sources)
     rows = {s["id"]: s for s in scanners_mod._sources_with_found()}
     assert rows[sid]["found"] == 1
-    assert rows[sid]["job_count"] == 3
+    assert rows[sid]["job_count"] == 4

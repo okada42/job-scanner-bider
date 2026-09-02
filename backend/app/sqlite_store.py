@@ -307,7 +307,7 @@ def job_counts_by_source() -> dict[str, int]:
 
 
 def job_counts_since_by_source(since_iso: str) -> dict[str, int]:
-    """Jobs recorded at or after since_iso, grouped by source (Found today)."""
+    """New jobs recorded at or after since_iso, excluding first-crawl baseline rows."""
     bound = (since_iso or "").replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(bound)
@@ -318,10 +318,14 @@ def job_counts_since_by_source(since_iso: str) -> dict[str, int]:
         prefix = bound[:19]
     conn = connect()
     rows = conn.execute(
-        """select source_id, count(*) as n from jobs
-           where source_id is not null and source_id != ''
-             and created_at >= ?
-           group by source_id""",
+        """select j.source_id, count(*) as n from jobs j
+           where j.source_id is not null and j.source_id != ''
+             and j.created_at >= ?
+             and not exists (
+               select 1 from job_events e
+               where e.job_id = j.id and e.event = 'BASELINE'
+             )
+           group by j.source_id""",
         (prefix,),
     ).fetchall()
     return {str(r["source_id"]): int(r["n"]) for r in rows if r["source_id"]}

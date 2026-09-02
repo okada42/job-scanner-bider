@@ -103,15 +103,39 @@ def job_counts_since_by_source(since_iso: str) -> dict[str, int]:
             sid = str(source.get("id") or "")
             if not sid:
                 continue
-            res = (
-                sb.table("jobs")
-                .select("id", count="exact")
-                .eq("source_id", sid)
-                .gte("created_at", since_iso)
-                .limit(1)
-                .execute()
-            )
-            counts[sid] = int(res.count or 0)
+            ids: list[str] = []
+            start = 0
+            page = 1000
+            while True:
+                jobs_res = (
+                    sb.table("jobs")
+                    .select("id")
+                    .eq("source_id", sid)
+                    .gte("created_at", since_iso)
+                    .range(start, start + page - 1)
+                    .execute()
+                )
+                rows = jobs_res.data or []
+                ids.extend(str(row["id"]) for row in rows if row.get("id"))
+                if len(rows) < page:
+                    break
+                start += page
+            if not ids:
+                counts[sid] = 0
+                continue
+            baseline_ids: set[str] = set()
+            chunk = 100
+            for i in range(0, len(ids), chunk):
+                part = ids[i : i + chunk]
+                ev = (
+                    sb.table("job_events")
+                    .select("job_id")
+                    .eq("event", "BASELINE")
+                    .in_("job_id", part)
+                    .execute()
+                )
+                baseline_ids.update(str(row["job_id"]) for row in (ev.data or []) if row.get("job_id"))
+            counts[sid] = len(ids) - len(baseline_ids)
     except Exception:
         return counts
     return counts

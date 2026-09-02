@@ -151,6 +151,6 @@ The Bider must not generate proposals, click final submit, or bypass CAPTCHA / a
 4. **Later crawls:** skip any job whose `(platform, external_job_id)` or URL is already stored. A job that is **not** in the database is a new posting — apply keyword/budget rules and the **Bad clients** inbox, then queue + Discord.
 5. **Bad clients:** names you add on the dashboard. If a new job’s client contains any of those names, it is stored as seen and skipped (no queue, no Discord).
 6. If the first crawl parses **zero** jobs (login wall or empty page), the baseline is **not** marked complete, so a later successful parse is not treated as a flood of “new” jobs.
-7. **Found** on the Sources table is jobs recorded **today** for that URL (resets at midnight Japan time). The grey **listed** number is the platform’s current catalog total, not today’s count.
+7. **Found** on the Sources table is **new jobs recorded today** for that URL (resets at midnight Japan time). The first crawl’s baseline listings are not counted. The grey **listed** number is the platform’s current catalog total.
 
 Without real `SUPABASE_*` values the backend uses a local SQLite file at `data/job-scanner.db`.
