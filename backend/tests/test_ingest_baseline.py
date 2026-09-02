@@ -262,7 +262,7 @@ def test_crowdworks_vue_container_listings():
                         "title": "Androidアプリの通信解析",
                         "expired_on": "2026-09-10",
                     },
-                    "client": {"username": "studio-k"},
+                    "client": {"username": "studio-k", "is_employer_certification": True},
                     "payment": {"fixed_price_payment": {"min_budget": 30000, "max_budget": 80000}},
                 }
             ]
@@ -280,6 +280,7 @@ def test_crowdworks_vue_container_listings():
     assert jobs[0].url == "https://crowdworks.jp/public/jobs/13423844"
     assert adapter.last_meta.get("total_entries") == 8126
     assert adapter.last_meta.get("parsed") == 1
+    assert jobs[0].extra.get("verified") is True
 
 
 def test_crowdworks_search_links_without_ids_are_ignored():

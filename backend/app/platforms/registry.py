@@ -191,6 +191,8 @@ class CrowdWorksAdapter(PlatformAdapter):
                     "description": offer.get("description_digest"),
                     "category_id": category_id,
                     "login_required": bool(offer.get("is_login_required")),
+                    "verified": bool(client.get("is_employer_certification")),
+                    "is_employer_certification": bool(client.get("is_employer_certification")),
                     "job_kind": kind,
                     "tag": tag,
                 },

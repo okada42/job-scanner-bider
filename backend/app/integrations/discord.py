@@ -16,8 +16,8 @@ PLATFORM_STYLE = {
     "crowdworks": {
         "label": "Crowdworks",
         "footer": "CrowdWorks New Job Notification",
-        "color": 0xE53935,
-        "dot": "🔴",
+        "color": 0x1E88E5,
+        "dot": "🔵",
     },
     "lancers": {
         "label": "Lancers",
@@ -28,8 +28,8 @@ PLATFORM_STYLE = {
     "coconala": {
         "label": "Coconala",
         "footer": "Coconala New Job Notification",
-        "color": 0x00C853,
-        "dot": "🟢",
+        "color": 0xFDD835,
+        "dot": "🟡",
     },
 }
 
@@ -80,13 +80,19 @@ def remaining_label(deadline: str | None) -> str | None:
     return f"{int(hours / 24)}d"
 
 
-def _digest(text: str | None) -> str:
-    if not text:
-        return ""
-    cleaned = re.sub(r"\s+", " ", str(text).replace("\r", " ")).strip()
-    if len(cleaned) > 400:
-        return cleaned[:397] + "..."
-    return cleaned
+def _verification(job: dict, extra: dict) -> str:
+    flags = [
+        extra.get("verified"),
+        extra.get("is_employer_certification"),
+        extra.get("identity_verified"),
+        job.get("verified"),
+        job.get("is_employer_certification"),
+    ]
+    if any(value is True for value in flags):
+        return "Verification ✅認定"
+    if any(value is False for value in flags):
+        return "Verification ❌未認定"
+    return "Verification —"
 
 
 def _kind(job: dict) -> str:
@@ -144,17 +150,12 @@ def build_new_job_payload(job: dict) -> dict:
     bits.append(f"💰 {_yen(job.get('budget'))}")
     judgment = " · ".join(bits)
 
-    description = extra.get("description") or job.get("description")
     lines = [
         f"{style['dot']} {_kind(job)} · {client}",
-        "",
-        f"`{url}`" if url else "",
+        _verification(job, extra),
         "",
         judgment,
     ]
-    digest = _digest(description)
-    if digest:
-        lines.extend(["", digest])
     body = "\n".join(lines).strip()
 
     embed = {
@@ -163,11 +164,9 @@ def build_new_job_payload(job: dict) -> dict:
         "color": style["color"],
         "footer": {"text": style["footer"]},
     }
-    if url:
-        embed["url"] = url
-        embed["fields"] = [{"name": "URL", "value": f"`{url}`", "inline": False}]
     payload = {"embeds": [embed]}
     if url:
+        # Plain URL once, as message text, so it is visible and one-click copyable.
         payload["content"] = url
     return payload
 
