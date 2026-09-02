@@ -237,6 +237,31 @@ def queued_jobs(limit: int = 50) -> list[dict]:
         return []
 
 
+def jobs_failed_discord(limit: int = 50) -> list[dict]:
+    """Jobs whose Discord alert failed and has not been sent yet (retry queue)."""
+    try:
+        sb = supabase()
+        failed = sb.table("job_events").select("job_id").eq("event", "DISCORD_FAILED").limit(200).execute()
+        sent = sb.table("job_events").select("job_id").eq("event", "DISCORD_SENT").limit(1000).execute()
+        sent_ids = {str(row.get("job_id")) for row in (sent.data or []) if row.get("job_id")}
+        ids: list[str] = []
+        for row in failed.data or []:
+            jid = str(row.get("job_id") or "")
+            if not jid or jid in sent_ids or jid in ids:
+                continue
+            ids.append(jid)
+            if len(ids) >= int(limit):
+                break
+        out: list[dict] = []
+        for jid in ids:
+            job = get_job(jid)
+            if job:
+                out.append(job)
+        return out
+    except Exception:
+        return []
+
+
 def active_job_count() -> int:
     try:
         res = (

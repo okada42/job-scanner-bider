@@ -110,7 +110,7 @@ async function scheduleScanAlarm() {
     const data = await api("/api/scanners");
     const sources = (data.sources || []).filter((s) => s.enabled);
     if (sources.length) {
-      const minSec = Math.min(...sources.map((s) => Number(s.scan_interval) || 20));
+      const minSec = Math.min(...sources.map((s) => Number(s.scan_interval) || 60));
       periodInMinutes = Math.max(CHROME_ALARM_FLOOR_MIN, minSec / 60);
     }
   } catch (_) {
@@ -140,7 +140,7 @@ async function runListingScan() {
     let lastError = null;
 
     for (const source of sources) {
-      const intervalMs = Math.max(5, Number(source.scan_interval) || 20) * 1000;
+      const intervalMs = Math.max(5, Number(source.scan_interval) || 60) * 1000;
       const last = Number(lastRuns[source.id] || 0);
       if (last && now - last < intervalMs) continue;
       try {

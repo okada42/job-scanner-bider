@@ -172,17 +172,21 @@ def build_new_job_payload(job: dict) -> dict:
     return payload
 
 
-async def notify_new_job(job: dict) -> None:
+async def notify_new_job(job: dict) -> bool:
+    """Post a Discord webhook for one job. True if Discord accepted it (or tests skip HTTP)."""
     if os.environ.get("PYTEST_CURRENT_TEST"):
-        return
+        return True
     if not settings.discord_webhook_url:
-        return
+        log.warning("discord webhook unset; cannot notify url=%s", job.get("url"))
+        return False
     payload = build_new_job_payload(job)
     try:
         async with httpx.AsyncClient(timeout=15.0) as client_http:
             res = await client_http.post(settings.discord_webhook_url, json=payload)
             if res.status_code >= 400:
                 log.warning("discord notify %s %s", res.status_code, res.text[:200])
-            res.raise_for_status()
+                return False
+            return True
     except Exception:
         log.exception("discord notify failed platform=%s url=%s", job.get("platform"), job.get("url"))
+        return False

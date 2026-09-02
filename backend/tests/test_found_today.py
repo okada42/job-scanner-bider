@@ -29,11 +29,12 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "get_source",
         "update_source",
         "get_control",
+        "jobs_failed_discord",
     ):
         monkeypatch.setattr(scanner_mod, name, getattr(sqlite_store, name))
 
     async def _no_discord(*_a, **_k):
-        return None
+        return True
 
     monkeypatch.setattr(scanner_mod, "notify_new_job", _no_discord)
     source = sqlite_store.insert_source(

@@ -74,6 +74,8 @@ Redeploy the Netlify site after changing `VITE_API_URL`. After a CORS change, wa
 
 ## Chrome extension (local, not Netlify)
 
+The unpacked extension lives in the repo folder **`extension/`** (same level as `dashboard/` and `backend/`). It is not hosted on Netlify.
+
 Use **two Chrome profiles**, same unpacked extension, opposite toggles.
 
 | Profile | Enable scan | Enable apply (Bider) | Role |
@@ -141,16 +143,17 @@ Same as above, with Backend URL `http://127.0.0.1:8000` while developing against
 
 ## Safety
 
-The Bider must not generate proposals, click final submit, or bypass CAPTCHA / anti-bot. Scan interval defaults to 20s per source and is editable on the dashboard. Raise it if a platform rate-limits.
+The Bider must not generate proposals, click final submit, or bypass CAPTCHA / anti-bot. Scan interval defaults to **60 seconds** per source and is editable on the dashboard. Raise it if a platform rate-limits.
 
 ## How “new job” is decided
 
 1. You paste a **search-results URL** on the dashboard (not a single job page).
-2. The backend `GET`s that URL, parses job cards (id + URL) for CrowdWorks `/public/jobs/{id}`, Lancers `/work/detail/{id}`, and Coconala `/requests/{id}`.
+2. The backend `GET`s that URL, parses job cards (id + URL) for CrowdWorks `/public/jobs/{id}`, Lancers `/work/detail/{id}`, and Coconala `/requests/{id}`. The Chrome extension can do the same fetch with your login cookies and `POST /api/jobs/ingest`.
 3. **First crawl** with at least one parsed job: write those ids into the jobs table as `RECORDED` / `BASELINE`. No Discord. No bider queue. Those listings already existed when monitoring started.
-4. **Later crawls:** skip any job whose `(platform, external_job_id)` or URL is already stored. A job that is **not** in the database is a new posting — apply keyword/budget rules and the **Bad clients** inbox, then queue + Discord.
+4. **Later crawls:** skip any job whose `(platform, external_job_id)` or URL is already stored. A job that is **not** in the database is a new posting: **write it to the database, then Discord**. Keyword/budget rules only affect the Bider queue, not Discord. If the webhook fails, the job stays in the DB and Discord is retried on the next crawl of that URL (~0.4s between posts so bursts are not dropped).
 5. **Bad clients:** names you add on the dashboard. If a new job’s client contains any of those names, it is stored as seen and skipped (no queue, no Discord).
 6. If the first crawl parses **zero** jobs (login wall or empty page), the baseline is **not** marked complete, so a later successful parse is not treated as a flood of “new” jobs.
 7. **Found** on the Sources table is **new jobs recorded today** for that URL (resets at midnight Japan time). The first crawl’s baseline listings are not counted. The grey **listed** number is the platform’s current catalog total.
+8. The **dashboard** and **Chrome extension** read jobs from the same API/database. Discord is an alert only; it is not a second source of listings.
 
 Without real `SUPABASE_*` values the backend uses a local SQLite file at `data/job-scanner.db`.

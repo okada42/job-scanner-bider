@@ -16,7 +16,7 @@ export default function App() {
     platform: "crowdworks",
     url: "",
     name: "",
-    scan_interval: 20,
+    scan_interval: 60,
     minimum_budget: "",
     maximum_applications: "",
     keywords: "",
@@ -190,7 +190,7 @@ export default function App() {
                 platform: form.platform,
                 url: form.url,
                 name: form.name || null,
-                scan_interval: Number(form.scan_interval) || 20,
+                scan_interval: Number(form.scan_interval) || 60,
                 rules,
               }),
             });
@@ -257,6 +257,7 @@ export default function App() {
                       Last scan: found {scanNotes[s.id].found ?? 0}, stored {scanNotes[s.id].created ?? 0}
                       {scanNotes[s.id].baselined ? `, baseline ${scanNotes[s.id].baselined}` : ""}
                       {scanNotes[s.id].queued ? `, queued ${scanNotes[s.id].queued}` : ""}
+                      {scanNotes[s.id].discorded ? `, discord ${scanNotes[s.id].discorded}` : ""}
                       {scanNotes[s.id].sample?.length
                         ? ` — ${scanNotes[s.id].sample
                             .map((j) => j.title || j.id)

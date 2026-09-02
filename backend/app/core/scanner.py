@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 
 from app.core.fetch import fetch_html
@@ -13,11 +15,42 @@ from app.store import (
     get_control,
     get_source,
     insert_job,
+    jobs_failed_discord,
     queued_jobs,
     update_source,
 )
 
 log = logging.getLogger("jobscanner.scan")
+DISCORD_GAP_SEC = 0.4
+
+
+def _discord_payload(job: dict, item: dict | None = None, source: dict | None = None) -> dict:
+    item = item or {}
+    extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+    if not extra and isinstance(job.get("extra"), dict):
+        extra = job.get("extra") or {}
+    return {
+        **job,
+        "description": item.get("description") or extra.get("description") or job.get("description"),
+        "job_kind": item.get("job_kind") or extra.get("job_kind") or job.get("job_kind"),
+        "login_required": extra.get("login_required", item.get("login_required", job.get("login_required"))),
+        "category_id": extra.get("category_id") or item.get("category_id") or job.get("category_id") or item.get("category") or job.get("category"),
+        "extra": extra,
+        "source_url": (source or {}).get("url") or job.get("source_url"),
+    }
+
+
+async def _notify_and_record(job: dict, item: dict | None = None, source: dict | None = None) -> bool:
+    payload = _discord_payload(job, item, source)
+    ok = bool(await notify_new_job(payload))
+    add_event(job["id"], "DISCORD_SENT" if ok else "DISCORD_FAILED", {"url": payload.get("url")})
+    if ok:
+        log.info("discord sent platform=%s id=%s url=%s", job.get("platform"), job.get("external_job_id"), payload.get("url"))
+    else:
+        log.warning("discord failed platform=%s id=%s url=%s", job.get("platform"), job.get("external_job_id"), payload.get("url"))
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        await asyncio.sleep(DISCORD_GAP_SEC)
+    return ok
 
 
 def _field(item, name, default=None):
@@ -89,17 +122,20 @@ async def ingest_jobs(
     baseline: bool | None = None,
     parse_note: str | None = None,
 ) -> dict:
-    """Crawl ingest: remember every job id, alert only on listings never stored before.
+    """Crawl ingest: store every job id; Discord only listings never stored before.
 
     First successful parse of a source is a baseline: jobs already on the page are
-    stored as seen and ignored (no Discord, no bider queue). Later crawls treat a
-    job as new only if (platform, external_job_id) or URL is not already in the DB.
+    stored as seen (no Discord, no bider queue). Later crawls treat a job as new
+    only if (platform, external_job_id) or URL is not already in the DB. Every new
+    job (except bad clients) is written then Discorded; a failed webhook is retried
+    on the next crawl. Bider queue is independent of Discord.
     """
     created = 0
     queued = 0
     baselined = 0
     skipped_seen = 0
     skipped_bad_client = 0
+    discorded = 0
     first_scan = is_first_scan(source) if baseline is None else baseline
     settings = get_bider_settings()
     excluded_clients = (get_control() or {}).get("excluded_clients") or []
@@ -110,6 +146,7 @@ async def ingest_jobs(
     if source:
         source_cache[str(source["id"])] = source
     touched_ids: set[str] = set()
+    pending_discord: list[tuple[dict, dict]] = []
 
     for raw in items:
         item = _item_dict(raw)
@@ -181,22 +218,23 @@ async def ingest_jobs(
             continue
         created += 1
         add_event(job["id"], "RECORDED", {"reason": reason, "matched": matched})
+        pending_discord.append((job, item))
         if job["status"] == "QUEUED":
             queued += 1
             add_event(job["id"], "QUEUED", {"reason": reason})
-            extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
-            await notify_new_job(
-                {
-                    **job,
-                    "description": item.get("description") or extra.get("description"),
-                    "job_kind": item.get("job_kind") or extra.get("job_kind"),
-                    "login_required": extra.get("login_required", item.get("login_required")),
-                    "category_id": extra.get("category_id") or item.get("category_id") or item.get("category"),
-                    "extra": extra,
-                    "source_url": (source or {}).get("url"),
-                }
-            )
             await hub.broadcast({"event": "NEW_JOB", "job": bider_payload(job)})
+
+    seen_discord: set[str] = {job["id"] for job, _item in pending_discord}
+    for failed in jobs_failed_discord(50):
+        fid = str(failed.get("id") or "")
+        if not fid or fid in seen_discord:
+            continue
+        pending_discord.append((failed, {}))
+        seen_discord.add(fid)
+
+    for job, item in pending_discord:
+        if await _notify_and_record(job, item, source):
+            discorded += 1
 
     stamp = {
         "last_error": None,
@@ -230,6 +268,7 @@ async def ingest_jobs(
         "baselined": baselined,
         "skipped_seen": skipped_seen,
         "skipped_bad_client": skipped_bad_client,
+        "discorded": discorded,
         "baseline": first_scan,
     }
 

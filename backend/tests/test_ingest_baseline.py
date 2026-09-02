@@ -23,11 +23,12 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "get_source",
         "update_source",
         "get_control",
+        "jobs_failed_discord",
     ):
         monkeypatch.setattr(scanner_mod, name, getattr(sqlite_store, name))
 
     async def _no_discord(*_a, **_k):
-        return None
+        return True
 
     monkeypatch.setattr(scanner_mod, "notify_new_job", _no_discord)
     source = sqlite_store.insert_source(
@@ -118,6 +119,110 @@ def test_bad_client_is_recorded_but_not_queued(db):
     assert result["skipped_bad_client"] == 1
     jobs = {j["external_job_id"]: j for j in sqlite_store.list_jobs()}
     assert jobs["9"]["status"] == "RECORDED"
+
+
+def _events_for(job_id: str) -> list[str]:
+    conn = sqlite_store.connect()
+    rows = conn.execute(
+        "select event from job_events where job_id = ? order by timestamp", (job_id,)
+    ).fetchall()
+    return [r["event"] for r in rows]
+
+
+def test_baseline_does_not_discord(db, monkeypatch):
+    sent = []
+
+    async def capture(job):
+        sent.append(job["external_job_id"])
+        return True
+
+    monkeypatch.setattr(scanner_mod, "notify_new_job", capture)
+    result = asyncio.run(ingest_jobs([_job("1"), _job("2")], source=db))
+    assert result["discorded"] == 0
+    assert sent == []
+    for job in sqlite_store.list_jobs():
+        assert "DISCORD_SENT" not in _events_for(job["id"])
+        assert "BASELINE" in _events_for(job["id"])
+
+
+def test_later_new_job_writes_db_and_discords(db, monkeypatch):
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    sent = []
+
+    async def capture(job):
+        sent.append(job["external_job_id"])
+        return True
+
+    monkeypatch.setattr(scanner_mod, "notify_new_job", capture)
+    source = sqlite_store.get_source(db["id"])
+    result = asyncio.run(ingest_jobs([_job("1"), _job("2", "LP制作")], source=source))
+    assert result["created"] == 1
+    assert result["discorded"] == 1
+    assert sent == ["2"]
+    jobs = {j["external_job_id"]: j for j in sqlite_store.list_jobs()}
+    assert "DISCORD_SENT" in _events_for(jobs["2"]["id"])
+    assert "DISCORD_SENT" not in _events_for(jobs["1"]["id"])
+
+
+def test_unmatched_new_job_still_discords(db, monkeypatch):
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    sqlite_store.update_source(db["id"], {"rules": {"keywords": ["zzzz-no-match"]}})
+    sent = []
+
+    async def capture(job):
+        sent.append(job["external_job_id"])
+        return True
+
+    monkeypatch.setattr(scanner_mod, "notify_new_job", capture)
+    source = sqlite_store.get_source(db["id"])
+    result = asyncio.run(ingest_jobs([_job("2")], source=source))
+    assert result["queued"] == 0
+    assert result["created"] == 1
+    assert result["discorded"] == 1
+    assert sent == ["2"]
+
+
+def test_failed_discord_retries_on_next_crawl(db, monkeypatch):
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    attempts = []
+
+    async def flaky(job):
+        attempts.append(job["external_job_id"])
+        return len(attempts) >= 2
+
+    monkeypatch.setattr(scanner_mod, "notify_new_job", flaky)
+    source = sqlite_store.get_source(db["id"])
+    first = asyncio.run(ingest_jobs([_job("2")], source=source))
+    assert first["created"] == 1
+    assert first["discorded"] == 0
+    job = next(j for j in sqlite_store.list_jobs() if j["external_job_id"] == "2")
+    assert "DISCORD_FAILED" in _events_for(job["id"])
+    assert "DISCORD_SENT" not in _events_for(job["id"])
+
+    source = sqlite_store.get_source(db["id"])
+    second = asyncio.run(ingest_jobs([_job("2")], source=source))
+    assert second["created"] == 0
+    assert second["skipped_seen"] == 1
+    assert second["discorded"] == 1
+    assert attempts == ["2", "2"]
+    assert "DISCORD_SENT" in _events_for(job["id"])
+
+
+def test_bad_client_does_not_discord(db, monkeypatch):
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    sqlite_store.update_control({"excluded_clients": ["acme"]})
+    sent = []
+
+    async def capture(job):
+        sent.append(job["external_job_id"])
+        return True
+
+    monkeypatch.setattr(scanner_mod, "notify_new_job", capture)
+    source = sqlite_store.get_source(db["id"])
+    result = asyncio.run(ingest_jobs([_job("9")], source=source))
+    assert result["skipped_bad_client"] == 1
+    assert result["discorded"] == 0
+    assert sent == []
 
 
 def test_crowdworks_listing_parser_extracts_job_ids():

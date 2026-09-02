@@ -23,7 +23,7 @@ class SourceCreate(BaseModel):
     platform: Platform
     url: HttpUrl
     enabled: bool = True
-    scan_interval: int = 20
+    scan_interval: int = 60
     rules: Rules = Field(default_factory=Rules)
 
 

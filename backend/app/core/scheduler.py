@@ -32,7 +32,7 @@ async def _loop() -> None:
                             continue
                         if not platforms.get(source["platform"], True):
                             continue
-                        interval = int(source.get("scan_interval") or 20)
+                        interval = int(source.get("scan_interval") or 60)
                         last = source.get("last_scanned_at") or source.get("updated_at")
                         due = True
                         if last:

@@ -47,7 +47,7 @@ create table if not exists scanner_sources (
   platform text not null,
   url text not null,
   enabled integer not null default 1,
-  scan_interval integer not null default 20,
+  scan_interval integer not null default 60,
   rules text not null default '{}',
   last_scanned_at text,
   last_error text,
@@ -352,7 +352,7 @@ def insert_source(row: dict) -> dict:
                 row["platform"],
                 row["url"],
                 1 if row.get("enabled", True) else 0,
-                int(row.get("scan_interval") or 20),
+                int(row.get("scan_interval") or 60),
                 json.dumps(row.get("rules") or {}),
                 row.get("last_scanned_at"),
                 row.get("last_error"),
@@ -381,7 +381,7 @@ def update_source(source_id: str, patch: dict) -> dict:
                 merged["platform"],
                 merged["url"],
                 1 if merged.get("enabled", True) else 0,
-                int(merged.get("scan_interval") or 20),
+                int(merged.get("scan_interval") or 60),
                 json.dumps(merged.get("rules") or {}),
                 merged.get("last_scanned_at"),
                 merged.get("last_error"),
@@ -509,6 +509,27 @@ def update_job(job_id: str, patch: dict) -> dict:
 
 def queued_jobs(limit: int = 50) -> list[dict]:
     return list_jobs(status="QUEUED", limit=limit)
+
+
+def jobs_failed_discord(limit: int = 50) -> list[dict]:
+    """Jobs whose Discord alert failed and has not been sent yet (retry queue)."""
+    conn = connect()
+    rows = conn.execute(
+        """select j.* from jobs j
+           where exists (
+             select 1 from job_events e where e.job_id = j.id and e.event = 'DISCORD_FAILED'
+           )
+           and not exists (
+             select 1 from job_events e where e.job_id = j.id and e.event = 'DISCORD_SENT'
+           )
+           and not exists (
+             select 1 from job_events e where e.job_id = j.id and e.event = 'BASELINE'
+           )
+           order by j.detected_at
+           limit ?""",
+        (int(limit),),
+    ).fetchall()
+    return [_job_row(r) for r in rows]
 
 
 def active_job_count() -> int:

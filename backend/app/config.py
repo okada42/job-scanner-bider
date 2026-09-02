@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     supabase_db_password: str = ""
     discord_webhook_url: str = ""
     api_token: str = "change-me"
-    scan_interval_seconds: int = 20
+    scan_interval_seconds: int = 60
     # html = backend crawls listing pages. extension = skip that loop; jobs arrive via POST /api/jobs/ingest.
     scan_mode: str = "html"
     backend_host: str = "0.0.0.0"
