@@ -21,6 +21,7 @@ export default function App() {
     maximum_applications: "",
     keywords: "",
   });
+  const [reportingJobId, setReportingJobId] = useState(null);
 
   const authed = Boolean(token);
 
@@ -39,6 +40,32 @@ export default function App() {
     const t = setInterval(() => refresh().catch(() => {}), 5000);
     return () => clearInterval(t);
   }, [authed]);
+
+  async function reportBadClient(job) {
+    const client = String(job.client || "").trim();
+    if (!client) {
+      window.alert("This job has no client name to report.");
+      return;
+    }
+    if (!window.confirm("Bad client?")) return;
+    setReportingJobId(job.id);
+    setError("");
+    try {
+      const next = uniqueClientNames([
+        ...(data?.control?.excluded_clients || []),
+        client,
+      ]);
+      await api("/api/settings/scanner", {
+        method: "PUT",
+        body: JSON.stringify({ excluded_clients: next }),
+      });
+      await refresh();
+    } catch (err) {
+      setError(err.message || "Could not add this client.");
+    } finally {
+      setReportingJobId(null);
+    }
+  }
 
   async function tryLogin(e) {
     e.preventDefault();
@@ -358,10 +385,22 @@ export default function App() {
                     <div className="muted">{j.client}</div>
                   </td>
                   <td>{j.budget || "—"}</td>
-                  <td>
-                    <a href={j.url} target="_blank" rel="noreferrer">
-                      Open
-                    </a>
+                  <td className="job-actions">
+                    {j.url ? (
+                      <a href={j.url} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                    <button
+                      type="button"
+                      className="report-btn"
+                      disabled={reportingJobId === j.id || !String(j.client || "").trim()}
+                      onClick={() => reportBadClient(j)}
+                    >
+                      {reportingJobId === j.id ? "Reporting…" : "Report"}
+                    </button>
                   </td>
                 </tr>
               ))}

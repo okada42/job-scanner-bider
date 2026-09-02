@@ -54,6 +54,31 @@ th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line
 .url { display: block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .narrow { width: 72px; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.job-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  white-space: nowrap;
+}
+.report-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 0;
+}
+.report-btn:hover {
+  border-color: transparent;
+  text-decoration: underline;
+}
+.report-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  text-decoration: none;
+}
 .split { display: grid; grid-template-columns: 320px 1fr; gap: 12px; }
 .grow { min-width: 0; }
 .bider { display: grid; gap: 10px; margin-bottom: 16px; }
