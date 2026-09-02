@@ -31,8 +31,14 @@ def _sources_with_found() -> list[dict]:
     for source in sources:
         row = dict(source)
         stored = int(counts.get(str(source.get("id")), 0) or 0)
+        parsed = source.get("last_job_count")
+        try:
+            parsed_n = int(parsed) if parsed is not None else 0
+        except (TypeError, ValueError):
+            parsed_n = 0
         row["job_count"] = stored
-        row["found"] = stored
+        row["found"] = parsed_n if parsed_n > 0 else stored
+        row["listing_total"] = source.get("last_listing_total")
         out.append(row)
     return out
 

@@ -258,7 +258,12 @@ export default function App() {
                   <span className="muted"> sec</span>
                 </td>
                 <td>{s.last_scanned_at ? new Date(s.last_scanned_at).toLocaleTimeString() : "—"}</td>
-                <td>{s.job_count ?? s.found ?? s.last_job_count ?? 0}</td>
+                <td>
+                  <div>{s.found ?? s.last_job_count ?? s.job_count ?? 0}</div>
+                  {s.listing_total ? (
+                    <div className="muted">{Number(s.listing_total).toLocaleString()} listed</div>
+                  ) : null}
+                </td>
                 <td className="actions">
                   <button
                     onClick={() =>

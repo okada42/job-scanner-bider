@@ -52,6 +52,7 @@ create table if not exists scanner_sources (
   last_scanned_at text,
   last_error text,
   last_job_count integer,
+  last_listing_total integer,
   created_at text not null,
   updated_at text not null
 );
@@ -125,6 +126,9 @@ def connect() -> sqlite3.Connection:
         cols = {r[1] for r in conn.execute("pragma table_info(scanner_control)").fetchall()}
         if "excluded_clients" not in cols:
             conn.execute("alter table scanner_control add column excluded_clients text not null default '[]'")
+        source_cols = {r[1] for r in conn.execute("pragma table_info(scanner_sources)").fetchall()}
+        if "last_listing_total" not in source_cols:
+            conn.execute("alter table scanner_sources add column last_listing_total integer")
         conn.execute(
             "insert or ignore into scanner_control (id, enabled, platforms, record_all, updated_at) values (1, 0, ?, 1, ?)",
             (json.dumps(DEFAULT_CONTROL["platforms"]), now_iso()),
@@ -195,6 +199,7 @@ def _source_row(row: sqlite3.Row) -> dict:
         "last_scanned_at": row["last_scanned_at"],
         "last_error": row["last_error"],
         "last_job_count": row["last_job_count"],
+        "last_listing_total": row["last_listing_total"] if "last_listing_total" in row.keys() else None,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -314,8 +319,8 @@ def insert_source(row: dict) -> dict:
     with _lock:
         conn.execute(
             """insert into scanner_sources
-               (id, name, platform, url, enabled, scan_interval, rules, last_scanned_at, last_error, last_job_count, created_at, updated_at)
-               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, name, platform, url, enabled, scan_interval, rules, last_scanned_at, last_error, last_job_count, last_listing_total, created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 source_id,
                 row.get("name"),
@@ -327,6 +332,7 @@ def insert_source(row: dict) -> dict:
                 row.get("last_scanned_at"),
                 row.get("last_error"),
                 row.get("last_job_count"),
+                row.get("last_listing_total"),
                 now,
                 now,
             ),
@@ -344,7 +350,7 @@ def update_source(source_id: str, patch: dict) -> dict:
     with _lock:
         conn.execute(
             """update scanner_sources set name = ?, platform = ?, url = ?, enabled = ?, scan_interval = ?,
-               rules = ?, last_scanned_at = ?, last_error = ?, last_job_count = ?, updated_at = ? where id = ?""",
+               rules = ?, last_scanned_at = ?, last_error = ?, last_job_count = ?, last_listing_total = ?, updated_at = ? where id = ?""",
             (
                 merged.get("name"),
                 merged["platform"],
@@ -355,6 +361,7 @@ def update_source(source_id: str, patch: dict) -> dict:
                 merged.get("last_scanned_at"),
                 merged.get("last_error"),
                 merged.get("last_job_count"),
+                merged.get("last_listing_total"),
                 merged["updated_at"],
                 source_id,
             ),

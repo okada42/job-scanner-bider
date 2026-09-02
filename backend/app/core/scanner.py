@@ -273,6 +273,13 @@ async def scan_source(source: dict) -> dict:
             note,
         )
     result = await ingest_jobs(extracted, source=source, parse_note=note)
+    meta = getattr(adapter, "last_meta", None) or {}
+    listing_total = meta.get("total_entries")
+    if source and listing_total is not None:
+        try:
+            update_source(source["id"], {"last_listing_total": int(listing_total)})
+        except Exception:
+            log.exception("failed to store listing_total source=%s", source.get("id"))
     sample = [
         {
             "id": _field(item, "external_job_id"),
@@ -285,6 +292,8 @@ async def scan_source(source: dict) -> dict:
     result["html_bytes"] = len(html)
     result["sample"] = sample
     result["note"] = note
+    result["listing_total"] = listing_total
+    result["page_size"] = meta.get("page_size")
     log.info("scan ingest platform=%s source=%s %s", source.get("platform"), source.get("id"), result)
     return result
 

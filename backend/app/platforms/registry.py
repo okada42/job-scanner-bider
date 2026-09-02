@@ -78,8 +78,10 @@ class CrowdWorksAdapter(PlatformAdapter):
     name = "crowdworks"
     hosts = ("crowdworks.jp", "www.crowdworks.jp")
     id_re = re.compile(r"/public/jobs/(\d+)")
+    last_meta: dict = {}
 
     def parse_listing(self, html: str, page_url: str) -> list[ExtractedJob]:
+        self.last_meta = {}
         jobs: dict[str, ExtractedJob] = {}
         soup = BeautifulSoup(html, "lxml")
         vue_n = self._parse_vue_container(soup, jobs, page_url)
@@ -135,11 +137,15 @@ class CrowdWorksAdapter(PlatformAdapter):
                     application_count=_as_int(node.get("applications") or node.get("entry_count")),
                 )
         log.info(
-            "crowdworks parse url=%s vue=%s total=%s",
+            "crowdworks parse url=%s vue=%s total=%s listing_total=%s",
             page_url,
             vue_n,
             len(jobs),
+            (self.last_meta or {}).get("total_entries"),
         )
+        meta = dict(self.last_meta or {})
+        meta["parsed"] = len(jobs)
+        self.last_meta = meta
         return list(jobs.values())
 
     def _parse_vue_container(self, soup: BeautifulSoup, jobs: dict[str, ExtractedJob], page_url: str) -> int:
@@ -191,6 +197,15 @@ class CrowdWorksAdapter(PlatformAdapter):
             )
         added = len(jobs) - before
         log.info("crowdworks vue-container offers=%s added=%s url=%s", len(offers), added, page_url)
+        result = payload.get("searchResult") if isinstance(payload.get("searchResult"), dict) else {}
+        paging = result.get("page") if isinstance(result.get("page"), dict) else {}
+        self.last_meta = {
+            "parsed": added,
+            "total_entries": _as_int(paging.get("total_entries")),
+            "page_size": _as_int(paging.get("size")),
+            "current_page": _as_int(paging.get("current_page")),
+            "total_page": _as_int(paging.get("total_page")),
+        }
         return added
 
 

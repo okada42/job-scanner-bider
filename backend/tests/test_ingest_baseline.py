@@ -149,6 +149,7 @@ def test_crowdworks_vue_container_listings():
     payload = {
         "isMobile": False,
         "searchResult": {
+            "page": {"current_page": 1, "total_page": 163, "size": 50, "total_entries": 8126},
             "job_offers": [
                 {
                     "job_offer": {
@@ -164,13 +165,16 @@ def test_crowdworks_vue_container_listings():
     }
     escaped = html_lib.escape(json.dumps(payload), quote=True)
     page = f'<div id="vue-container" data="{escaped}"></div>'
-    jobs = CrowdWorksAdapter().parse_listing(page, "https://crowdworks.jp/public/jobs/search?order=new")
+    adapter = CrowdWorksAdapter()
+    jobs = adapter.parse_listing(page, "https://crowdworks.jp/public/jobs/search?category_id=226&order=new")
     assert len(jobs) == 1
     assert jobs[0].external_job_id == "13423844"
     assert jobs[0].title == "Androidアプリの通信解析"
     assert jobs[0].client == "studio-k"
     assert jobs[0].budget == "30,000円〜80,000円"
     assert jobs[0].url == "https://crowdworks.jp/public/jobs/13423844"
+    assert adapter.last_meta.get("total_entries") == 8126
+    assert adapter.last_meta.get("parsed") == 1
 
 
 def test_crowdworks_search_links_without_ids_are_ignored():

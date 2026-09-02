@@ -111,8 +111,13 @@ def insert_source(row: dict) -> dict:
 
 def update_source(source_id: str, patch: dict) -> dict:
     patch = {**patch, "updated_at": now_iso()}
-    res = supabase().table("scanner_sources").update(patch).eq("id", source_id).execute()
-    return res.data[0]
+    try:
+        res = supabase().table("scanner_sources").update(patch).eq("id", source_id).execute()
+        return res.data[0]
+    except Exception:
+        patch.pop("last_listing_total", None)
+        res = supabase().table("scanner_sources").update(patch).eq("id", source_id).execute()
+        return res.data[0]
 
 
 def delete_source(source_id: str) -> None:
