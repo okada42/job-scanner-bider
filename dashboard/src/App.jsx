@@ -8,6 +8,7 @@ export default function App() {
   const [token, setTok] = useState(getToken());
   const [login, setLogin] = useState(getToken());
   const [error, setError] = useState("");
+  const [scanNotes, setScanNotes] = useState({});
   const [data, setData] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [bider, setBider] = useState(null);
@@ -220,6 +221,20 @@ export default function App() {
                     {s.url}
                   </a>
                   {s.last_error && <div className="err small">{s.last_error}</div>}
+                  {scanNotes[s.id] && (
+                    <div className="scan-note">
+                      Last scan: found {scanNotes[s.id].found ?? 0}, stored {scanNotes[s.id].created ?? 0}
+                      {scanNotes[s.id].baselined ? `, baseline ${scanNotes[s.id].baselined}` : ""}
+                      {scanNotes[s.id].queued ? `, queued ${scanNotes[s.id].queued}` : ""}
+                      {scanNotes[s.id].sample?.length
+                        ? ` — ${scanNotes[s.id].sample
+                            .map((j) => j.title || j.id)
+                            .filter(Boolean)
+                            .slice(0, 3)
+                            .join(" · ")}`
+                        : ""}
+                    </div>
+                  )}
                 </td>
                 <td>{LABELS[s.platform]}</td>
                 <td>
@@ -254,7 +269,20 @@ export default function App() {
                   >
                     {s.enabled ? "Disable" : "Enable"}
                   </button>
-                  <button onClick={() => api(`/api/sources/${s.id}/scan`, { method: "POST" }).then(refresh)}>Scan</button>
+                  <button
+                    onClick={async () => {
+                      setError("");
+                      try {
+                        const result = await api(`/api/sources/${s.id}/scan`, { method: "POST" });
+                        setScanNotes((prev) => ({ ...prev, [s.id]: result }));
+                        await refresh();
+                      } catch (err) {
+                        setError(err.message || "Scan failed");
+                      }
+                    }}
+                  >
+                    Scan
+                  </button>
                   <button className="danger" onClick={() => api(`/api/sources/${s.id}`, { method: "DELETE" }).then(refresh)}>
                     Delete
                   </button>

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import html as html_lib
 import json
+import logging
 import re
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
 from app.platforms.base import ExtractedJob, PlatformAdapter
+
+log = logging.getLogger("jobscanner.parse")
 
 
 def absolute(base: str, href: str) -> str:
@@ -41,6 +45,34 @@ def text(el) -> str | None:
     return value or None
 
 
+def _cw_budget(payment: object) -> str | None:
+    if not isinstance(payment, dict):
+        return None
+    fixed = payment.get("fixed_price_payment") or {}
+    hourly = payment.get("hourly_payment") or {}
+    if not isinstance(fixed, dict):
+        fixed = {}
+    if not isinstance(hourly, dict):
+        hourly = {}
+    mn = fixed.get("min_budget") or hourly.get("min_hourly_wage") or hourly.get("min_budget")
+    mx = fixed.get("max_budget") or hourly.get("max_hourly_wage") or hourly.get("max_budget")
+
+    def yen(value) -> str | None:
+        if value is None or value == "":
+            return None
+        try:
+            return f"{int(float(value)):,}円"
+        except (TypeError, ValueError):
+            return None
+
+    parts = [p for p in (yen(mn), yen(mx)) if p]
+    if not parts:
+        return None
+    if len(parts) == 2 and parts[0] != parts[1]:
+        return f"{parts[0]}〜{parts[1]}"
+    return parts[-1]
+
+
 class CrowdWorksAdapter(PlatformAdapter):
     name = "crowdworks"
     hosts = ("crowdworks.jp", "www.crowdworks.jp")
@@ -49,6 +81,7 @@ class CrowdWorksAdapter(PlatformAdapter):
     def parse_listing(self, html: str, page_url: str) -> list[ExtractedJob]:
         jobs: dict[str, ExtractedJob] = {}
         soup = BeautifulSoup(html, "lxml")
+        vue_n = self._parse_vue_container(soup, jobs, page_url)
 
         for a in soup.select("a[href*='/public/jobs/']"):
             href = a.get("href") or ""
@@ -63,6 +96,8 @@ class CrowdWorksAdapter(PlatformAdapter):
             budget = text(card.select_one(".payment, .amount, [class*='payment'], [class*='amount']"))
             deadline = text(card.select_one(".absolute_date, [class*='deadline'], [class*='date']"))
             apps = _apps(text(card))
+            if jid in jobs:
+                continue
             jobs[jid] = ExtractedJob(
                 platform=self.name,
                 external_job_id=jid,
@@ -98,7 +133,47 @@ class CrowdWorksAdapter(PlatformAdapter):
                     deadline=str(node.get("deadline") or "") or (prev.deadline if prev else None),
                     application_count=_as_int(node.get("applications") or node.get("entry_count")),
                 )
+        log.info(
+            "crowdworks parse url=%s vue=%s total=%s",
+            page_url,
+            vue_n,
+            len(jobs),
+        )
         return list(jobs.values())
+
+    def _parse_vue_container(self, soup: BeautifulSoup, jobs: dict[str, ExtractedJob], page_url: str) -> int:
+        el = soup.find(id="vue-container")
+        raw = el.get("data") if el else None
+        if not raw:
+            log.info("crowdworks no vue-container data url=%s", page_url)
+            return 0
+        payload = _load_json(raw)
+        if not isinstance(payload, dict):
+            log.warning("crowdworks vue-container JSON unusable url=%s type=%s", page_url, type(payload))
+            return 0
+        offers = _cw_offers(payload)
+        before = len(jobs)
+        for wrap in offers:
+            if not isinstance(wrap, dict):
+                continue
+            offer = wrap.get("job_offer") if isinstance(wrap.get("job_offer"), dict) else wrap
+            jid = offer.get("id")
+            if not jid:
+                continue
+            jid = str(jid)
+            client = wrap.get("client") if isinstance(wrap.get("client"), dict) else {}
+            jobs[jid] = ExtractedJob(
+                platform=self.name,
+                external_job_id=jid,
+                url=f"https://crowdworks.jp/public/jobs/{jid}",
+                title=offer.get("title"),
+                client=client.get("username") or client.get("name"),
+                budget=_cw_budget(wrap.get("payment") or offer.get("payment")),
+                deadline=str(offer.get("expired_on") or offer.get("deadline") or "") or None,
+            )
+        added = len(jobs) - before
+        log.info("crowdworks vue-container offers=%s added=%s url=%s", len(offers), added, page_url)
+        return added
 
 
 class LancersAdapter(PlatformAdapter):
@@ -149,6 +224,7 @@ class LancersAdapter(PlatformAdapter):
                     deadline=str(node.get("ended_at") or node.get("deadline") or "") or None,
                     application_count=_as_int(node.get("proposal_count") or node.get("proposals")),
                 )
+        log.info("lancers parse url=%s total=%s", page_url, len(jobs))
         return list(jobs.values())
 
 
@@ -197,7 +273,32 @@ class CoconalaAdapter(PlatformAdapter):
                     deadline=str(node.get("expire_date") or node.get("deadline") or "") or None,
                     application_count=_as_int(node.get("proposal_count") or node.get("offers_count")),
                 )
+        log.info("coconala parse url=%s total=%s", page_url, len(jobs))
         return list(jobs.values())
+
+
+def _load_json(raw: str):
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            return json.loads(html_lib.unescape(raw))
+        except json.JSONDecodeError as exc:
+            log.warning("JSON decode failed: %s prefix=%s", exc, raw[:180].replace("\n", " "))
+            return None
+
+
+def _cw_offers(payload: dict) -> list:
+    result = payload.get("searchResult")
+    if isinstance(result, dict):
+        offers = result.get("job_offers")
+        if isinstance(offers, list):
+            return offers
+    for node in walk(payload):
+        offers = node.get("job_offers")
+        if isinstance(offers, list) and offers:
+            return offers
+    return []
 
 
 def _as_int(value) -> int | None:

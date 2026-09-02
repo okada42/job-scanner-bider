@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -11,6 +12,11 @@ from app.core.scanner import bider_payload, claim_next_job
 from app.core.scheduler import start_scheduler, stop_scheduler_loop
 from app.integrations.hub import hub
 from app.store import queued_jobs
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 @asynccontextmanager

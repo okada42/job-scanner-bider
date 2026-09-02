@@ -60,6 +60,7 @@ th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line
 .bider label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 .err { color: var(--off); }
 .err.small { font-size: 12px; margin-top: 4px; }
+.scan-note { font-size: 12px; color: var(--on); margin-top: 4px; max-width: 420px; }
 .login-wrap { min-height: 100vh; display: grid; place-items: center; }
 .login { width: 360px; display: grid; gap: 10px; }
 .login h1 { font-size: 22px; }

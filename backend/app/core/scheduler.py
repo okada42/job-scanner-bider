@@ -1,9 +1,12 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from app.config import settings
 from app.core.scanner import scan_source
 from app.store import get_control, list_sources, update_source
+
+log = logging.getLogger("jobscanner.scheduler")
 
 _task: asyncio.Task | None = None
 _running = False
@@ -30,7 +33,7 @@ async def _loop() -> None:
                         if not platforms.get(source["platform"], True):
                             continue
                         interval = int(source.get("scan_interval") or 20)
-                        last = source.get("last_scanned_at")
+                        last = source.get("last_scanned_at") or source.get("updated_at")
                         due = True
                         if last:
                             last_dt = datetime.fromisoformat(str(last).replace("Z", "+00:00"))
@@ -40,11 +43,17 @@ async def _loop() -> None:
                         try:
                             await scan_source(source)
                         except Exception as exc:
+                            log.exception(
+                                "scan failed platform=%s source=%s url=%s",
+                                source.get("platform"),
+                                source.get("id"),
+                                source.get("url"),
+                            )
                             await asyncio.to_thread(
                                 update_source, source["id"], {"last_error": str(exc)[:500]}
                             )
             except Exception:
-                pass
+                log.exception("scheduler loop error")
             await asyncio.sleep(1)
     finally:
         _running = False

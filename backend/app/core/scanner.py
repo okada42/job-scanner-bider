@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from app.core.fetch import fetch_html
@@ -15,6 +16,28 @@ from app.store import (
     queued_jobs,
     update_source,
 )
+
+log = logging.getLogger("jobscanner.scan")
+
+
+def _field(item, name, default=None):
+    if isinstance(item, dict):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def diagnose_listing_html(html: str) -> str:
+    body = html or ""
+    head = body[:12000]
+    low = head.lower()
+    bits = [f"html_bytes={len(body)}"]
+    bits.append("vue-container=yes" if "vue-container" in body else "vue-container=no")
+    bits.append("job_offers=yes" if "job_offers" in body else "job_offers=no")
+    if any(s in low for s in ("ログイン", "login", "sign in", "会員登録")):
+        bits.append("login_markers")
+    if any(s in body for s in ("Human Verification", "cf-challenge", "Just a moment", "captcha", "Access Denied")):
+        bits.append("bot_check")
+    return " ".join(bits)
 
 
 def bider_payload(job: dict) -> dict:
@@ -54,7 +77,13 @@ def is_first_scan(source: dict | None) -> bool:
     return bool(source) and not source.get("last_scanned_at")
 
 
-async def ingest_jobs(items: list, *, source: dict | None = None, baseline: bool | None = None) -> dict:
+async def ingest_jobs(
+    items: list,
+    *,
+    source: dict | None = None,
+    baseline: bool | None = None,
+    parse_note: str | None = None,
+) -> dict:
     """Crawl ingest: remember every job id, alert only on listings never stored before.
 
     First successful parse of a source is a baseline: jobs already on the page are
@@ -118,6 +147,7 @@ async def ingest_jobs(items: list, *, source: dict | None = None, baseline: bool
             try:
                 job = insert_job(row)
             except Exception:
+                log.exception("insert_job failed (baseline) platform=%s id=%s", platform, external_id)
                 continue
             created += 1
             baselined += 1
@@ -128,6 +158,7 @@ async def ingest_jobs(items: list, *, source: dict | None = None, baseline: bool
             try:
                 job = insert_job(row)
             except Exception:
+                log.exception("insert_job failed (bad_client) platform=%s id=%s", platform, external_id)
                 continue
             created += 1
             skipped_bad_client += 1
@@ -141,6 +172,7 @@ async def ingest_jobs(items: list, *, source: dict | None = None, baseline: bool
         try:
             job = insert_job(row)
         except Exception:
+            log.exception("insert_job failed platform=%s id=%s", platform, external_id)
             continue
         created += 1
         add_event(job["id"], "RECORDED", {"reason": reason, "matched": matched})
@@ -154,11 +186,16 @@ async def ingest_jobs(items: list, *, source: dict | None = None, baseline: bool
         "last_error": None,
         "last_job_count": len(items),
     }
-    if first_scan and not items:
-        stamp["last_error"] = (
-            "First crawl parsed 0 jobs (login wall or empty listing). "
-            "Baseline not complete; existing listings will not be treated as new yet."
-        )
+    if not items:
+        detail = parse_note or "parser returned no listings"
+        if first_scan:
+            stamp["last_error"] = (
+                f"First crawl parsed 0 jobs ({detail}). "
+                "Baseline not complete; existing listings will not be treated as new yet."
+            )[:500]
+        else:
+            stamp["last_error"] = f"Parsed 0 jobs ({detail})."[:500]
+            stamp["last_scanned_at"] = datetime.now(timezone.utc).isoformat()
     else:
         stamp["last_scanned_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -182,9 +219,57 @@ async def ingest_jobs(items: list, *, source: dict | None = None, baseline: bool
 
 async def scan_source(source: dict) -> dict:
     adapter = ADAPTERS[source["platform"]]
+    first = is_first_scan(source)
+    log.info(
+        "scan start platform=%s source=%s first=%s url=%s",
+        source.get("platform"),
+        source.get("id"),
+        first,
+        source.get("url"),
+    )
     html = await fetch_html(source["url"])
+    note = diagnose_listing_html(html)
     extracted = adapter.parse_listing(html, source["url"])
-    return await ingest_jobs(extracted, source=source)
+    log.info(
+        "scan parsed platform=%s source=%s found=%s %s",
+        source.get("platform"),
+        source.get("id"),
+        len(extracted),
+        note,
+    )
+    for item in extracted:
+        log.info(
+            "found platform=%s id=%s title=%s client=%s budget=%s url=%s",
+            _field(item, "platform"),
+            _field(item, "external_job_id"),
+            _field(item, "title"),
+            _field(item, "client"),
+            _field(item, "budget"),
+            _field(item, "url"),
+        )
+    if not extracted:
+        log.warning(
+            "scan found nothing platform=%s source=%s url=%s %s",
+            source.get("platform"),
+            source.get("id"),
+            source.get("url"),
+            note,
+        )
+    result = await ingest_jobs(extracted, source=source, parse_note=note)
+    sample = [
+        {
+            "id": _field(item, "external_job_id"),
+            "title": _field(item, "title"),
+            "client": _field(item, "client"),
+            "budget": _field(item, "budget"),
+        }
+        for item in extracted[:8]
+    ]
+    result["html_bytes"] = len(html)
+    result["sample"] = sample
+    result["note"] = note
+    log.info("scan ingest platform=%s source=%s %s", source.get("platform"), source.get("id"), result)
+    return result
 
 
 def claim_next_job() -> dict | None:

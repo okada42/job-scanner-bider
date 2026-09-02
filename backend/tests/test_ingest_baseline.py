@@ -124,3 +124,43 @@ def test_lancers_listing_parser_extracts_job_ids():
     jobs = LancersAdapter().parse_listing(html, "https://www.lancers.jp/work/search")
     assert jobs[0].external_job_id == "555"
     assert jobs[0].url.endswith("/work/detail/555")
+
+
+def test_crowdworks_vue_container_listings():
+    import html as html_lib
+    import json
+
+    payload = {
+        "isMobile": False,
+        "searchResult": {
+            "job_offers": [
+                {
+                    "job_offer": {
+                        "id": 13423844,
+                        "title": "Androidアプリの通信解析",
+                        "expired_on": "2026-09-10",
+                    },
+                    "client": {"username": "studio-k"},
+                    "payment": {"fixed_price_payment": {"min_budget": 30000, "max_budget": 80000}},
+                }
+            ]
+        },
+    }
+    escaped = html_lib.escape(json.dumps(payload), quote=True)
+    page = f'<div id="vue-container" data="{escaped}"></div>'
+    jobs = CrowdWorksAdapter().parse_listing(page, "https://crowdworks.jp/public/jobs/search?order=new")
+    assert len(jobs) == 1
+    assert jobs[0].external_job_id == "13423844"
+    assert jobs[0].title == "Androidアプリの通信解析"
+    assert jobs[0].client == "studio-k"
+    assert jobs[0].budget == "30,000円〜80,000円"
+    assert jobs[0].url == "https://crowdworks.jp/public/jobs/13423844"
+
+
+def test_crowdworks_search_links_without_ids_are_ignored():
+    html = """
+    <html>
+      <a href="https://crowdworks.jp/public/jobs/search?order=new">search</a>
+    </html>
+    """
+    assert CrowdWorksAdapter().parse_listing(html, "https://crowdworks.jp/public/jobs/search") == []
