@@ -232,6 +232,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       chrome.tabs.sendMessage(tab.id, { type: "PREPARE" }, sendResponse);
       return;
+    } else if (msg.type === "LIST_JOBS") {
+      try {
+        const jobs = await api("/api/jobs?limit=25");
+        sendResponse({ ok: true, jobs: Array.isArray(jobs) ? jobs : [] });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err), jobs: [] });
+      }
     } else if (msg.type === "GET_STATE") {
       const c = await cfg();
       const local = await chrome.storage.local.get({ scanStatus: null });

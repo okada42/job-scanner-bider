@@ -10,6 +10,10 @@
       .meta { color: #9aa6b8; margin: 6px 0; }
       button { margin-right: 6px; margin-top: 12px; padding: 8px 10px; }
       pre { white-space: pre-wrap; font-size: 12px; color: #c9d3e2; }
+      h3 { margin: 16px 0 6px; font-size: 11px; letter-spacing: 0.08em; color: #e8b86d; }
+      .job { padding: 8px 0; border-bottom: 1px solid #2a3344; }
+      .job a { color: #e8b86d; }
+      #jobs { max-height: 280px; overflow: auto; }
     </style>
   </head>
   <body>
@@ -26,6 +30,8 @@
       <button id="next">NEXT</button>
       <h3>Description</h3>
       <pre id="desc"></pre>
+      <h3>FROM DATABASE</h3>
+      <div id="jobs" class="meta">Loading…</div>
     </div>
     <script src="sidepanel.js"></script>
   </body>

@@ -1,3 +1,19 @@
+function esc(value) {
+  return String(value || "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch]));
+}
+
+function safeUrl(url) {
+  const raw = String(url || "");
+  if (raw.startsWith("https://") || raw.startsWith("http://")) return raw;
+  return "";
+}
+
 async function paint() {
   const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
   const job = state.currentJob;
@@ -5,6 +21,28 @@ async function paint() {
   document.getElementById("budget").textContent = job?.budget ? `💰 ${job.budget}` : "";
   document.getElementById("client").textContent = job?.client ? `👤 ${job.client}` : "";
   document.getElementById("deadline").textContent = job?.deadline ? `📅 ${job.deadline}` : "";
+
+  const box = document.getElementById("jobs");
+  const listed = await chrome.runtime.sendMessage({ type: "LIST_JOBS" });
+  if (!listed?.ok) {
+    box.textContent = listed?.error || "Set Backend URL and token in options.";
+    return;
+  }
+  const jobs = listed.jobs || [];
+  if (!jobs.length) {
+    box.textContent = "No jobs in the database yet.";
+    return;
+  }
+  box.innerHTML = jobs
+    .slice(0, 20)
+    .map((j) => {
+      const title = esc(j.title || j.external_job_id || "Untitled");
+      const href = safeUrl(j.url);
+      const open = href ? ` <a href="${esc(href)}" target="_blank" rel="noreferrer">Open</a>` : "";
+      const meta = [j.status, j.platform, j.client].filter(Boolean).map(esc).join(" · ");
+      return `<div class="job"><div>${title}</div><div class="meta">${meta}</div>${open}</div>`;
+    })
+    .join("");
 }
 
 document.getElementById("skip").onclick = () => chrome.runtime.sendMessage({ type: "SKIP" }).then(paint);

@@ -93,7 +93,9 @@ Defaults: both toggles **off**. Turn them on per profile after you set Backend U
 
 The search profile **must stay logged in**. Railway’s HTML GET is anonymous; if the search session expires, ingest will see login pages and find no jobs.
 
-**Alarm interval:** dashboard source intervals are honored as much as Manifest V3 allows. `chrome.alarms` typically cannot fire faster than **30 seconds** (unpacked) or **1 minute** (packed). A 20s dashboard interval therefore becomes ~30s–1min, not 20s. The extension also stores per-source last-run times and will not fetch a source again until its interval has elapsed.
+**Alarm interval:** dashboard source intervals are honored as much as Manifest V3 allows. `chrome.alarms` typically cannot fire faster than **30 seconds** (unpacked) or **1 minute** (packed). A 60s dashboard interval therefore becomes ~1 minute. The extension also stores per-source last-run times and will not fetch a source again until its interval has elapsed.
+
+The popup and side panel **FROM DATABASE** list is `GET /api/jobs` — the same table the dashboard uses. Scan still POSTs new listings into that table; it does not keep a second copy.
 
 `host_permissions` already include `https://*.up.railway.app/*`. For a custom domain, add that origin to `extension/manifest.json` and reload.
 

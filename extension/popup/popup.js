@@ -1,3 +1,27 @@
+function esc(value) {
+  return String(value || "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch]));
+}
+
+function safeUrl(url) {
+  const raw = String(url || "");
+  if (raw.startsWith("https://") || raw.startsWith("http://")) return raw;
+  return "";
+}
+
+function jobLine(job) {
+  const title = esc(job.title || job.external_job_id || "Untitled");
+  const bits = [job.status, job.platform, job.client, job.budget].filter(Boolean).map(esc);
+  const href = safeUrl(job.url);
+  const open = href ? `<a href="${esc(href)}" target="_blank" rel="noreferrer">Open</a>` : "";
+  return `<div class="job"><div>${title}</div><div class="meta">${bits.join(" · ")}</div>${open}</div>`;
+}
+
 async function refresh() {
   const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
   document.getElementById("scanEnabled").checked = Boolean(state.scanEnabled);
@@ -21,6 +45,22 @@ async function refresh() {
   } else {
     scanEl.textContent = "Scan on";
   }
+
+  const box = document.getElementById("jobs");
+  const listed = await chrome.runtime.sendMessage({ type: "LIST_JOBS" });
+  if (!listed?.ok) {
+    box.className = "empty";
+    box.textContent = listed?.error || "Set Backend URL and token in options, then Save.";
+    return;
+  }
+  const jobs = listed.jobs || [];
+  if (!jobs.length) {
+    box.className = "empty";
+    box.textContent = "No jobs in the database yet.";
+    return;
+  }
+  box.className = "";
+  box.innerHTML = jobs.map(jobLine).join("");
 }
 
 document.getElementById("scanEnabled").onchange = (e) =>
@@ -34,3 +74,4 @@ document.getElementById("skip").onclick = () => chrome.runtime.sendMessage({ typ
 document.getElementById("next").onclick = () => chrome.runtime.sendMessage({ type: "NEXT" }).then(refresh);
 document.getElementById("prepare").onclick = () => chrome.runtime.sendMessage({ type: "PREPARE_TAB" });
 refresh();
+setInterval(refresh, 8000);

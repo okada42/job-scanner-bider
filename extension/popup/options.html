@@ -25,7 +25,7 @@
     <div class="note">
       <p><strong>Search Chrome profile:</strong> Enable scan ON, Enable apply OFF. Stay logged in on CrowdWorks / Lancers / Coconala. The extension fetches listing URLs with this profile’s cookies and POSTs jobs to Railway. Railway never stores platform passwords.</p>
       <p><strong>Apply Chrome profile:</strong> Enable scan OFF, Enable apply ON. Opens queued jobs from the shared Railway queue. Does not scan. Never auto-submits.</p>
-      <p><strong>Alarm interval:</strong> Dashboard source intervals are honored as much as Manifest V3 allows. Chrome alarms usually fire at most every 30 seconds (unpacked) or 1 minute (packed). A 20s dashboard interval therefore becomes ~30s–1min, not 20s. Per-source last-run in extension storage still skips a source until its interval has elapsed.</p>
+      <p><strong>Alarm interval:</strong> Dashboard source intervals are honored as much as Manifest V3 allows. Chrome alarms usually fire at most every 30 seconds (unpacked) or 1 minute (packed). A 60s dashboard interval therefore becomes ~1 minute. Per-source last-run in extension storage still skips a source until its interval has elapsed.</p>
     </div>
     <button id="save">Save</button>
     <script src="options.js"></script>
