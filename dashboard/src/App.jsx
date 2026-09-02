@@ -126,8 +126,8 @@ export default function App() {
         <h2>Bad clients</h2>
         <p className="muted">
           Paste several client names at once. Separate them with a new line or a comma — you do not
-          need Enter for each name. New jobs whose client contains any of these names are stored as
-          seen but never queued or sent to Discord.
+          need Enter for each name. Duplicate names are skipped. New jobs whose client contains any
+          of these names are stored as seen but never queued or sent to Discord.
         </p>
         <BadClientInbox
           names={control?.excluded_clients || []}
@@ -391,11 +391,11 @@ function Queue({ jobs }) {
   );
 }
 
-function splitClientNames(text) {
+function uniqueClientNames(names) {
   const seen = new Set();
   const out = [];
-  for (const part of String(text || "").split(/[\n\r,;、，\t]+/)) {
-    const name = part.trim();
+  for (const raw of names || []) {
+    const name = String(raw || "").trim();
     const key = name.toLowerCase();
     if (!name || seen.has(key)) continue;
     seen.add(key);
@@ -404,23 +404,25 @@ function splitClientNames(text) {
   return out;
 }
 
+function splitClientNames(text) {
+  return uniqueClientNames(String(text || "").split(/[\n\r,;、，\t]+/));
+}
+
 function BadClientInbox({ names, onChange }) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const listed = uniqueClientNames(names);
 
   async function addNames(incoming) {
     const parsed = splitClientNames(Array.isArray(incoming) ? incoming.join("\n") : incoming);
     if (!parsed.length) return;
-    const have = new Set(names.map((n) => n.toLowerCase()));
+    const have = new Set(listed.map((n) => n.toLowerCase()));
     const extra = parsed.filter((n) => !have.has(n.toLowerCase()));
-    if (!extra.length) {
-      setDraft("");
-      return;
-    }
+    setDraft("");
+    if (!extra.length) return;
     setBusy(true);
     try {
-      await onChange([...names, ...extra]);
-      setDraft("");
+      await onChange(uniqueClientNames([...listed, ...extra]));
     } finally {
       setBusy(false);
     }
@@ -442,7 +444,7 @@ function BadClientInbox({ names, onChange }) {
   async function removeName(name) {
     setBusy(true);
     try {
-      await onChange(names.filter((n) => n !== name));
+      await onChange(listed.filter((n) => n !== name));
     } finally {
       setBusy(false);
     }
@@ -451,9 +453,9 @@ function BadClientInbox({ names, onChange }) {
   return (
     <div className="inbox">
       <div className="chips">
-        {names.length === 0 && <p className="muted">No names yet. Paste a list below.</p>}
-        {names.map((name) => (
-          <span className="chip" key={name}>
+        {listed.length === 0 && <p className="muted">No names yet. Paste a list below.</p>}
+        {listed.map((name) => (
+          <span className="chip" key={name.toLowerCase()}>
             {name}
             <button type="button" className="chip-x" disabled={busy} onClick={() => removeName(name)} aria-label={`Remove ${name}`}>
               ×

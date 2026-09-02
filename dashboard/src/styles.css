@@ -32,7 +32,7 @@ h2 { margin: 0 0 12px; font-size: 16px; color: var(--accent); }
 }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-button, select, input {
+button, select, input, textarea {
   background: #0e131b;
   color: var(--text);
   border: 1px solid var(--line);
@@ -94,6 +94,18 @@ th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line
   min-height: 88px;
   resize: vertical;
   line-height: 1.4;
+  background: #5c6574;
+  color: #edf0f4;
+  border-color: #6b7382;
+  caret-color: #edf0f4;
+}
+.inbox-add textarea::placeholder {
+  color: #c5cbd6;
+}
+.inbox-add textarea:focus {
+  outline: none;
+  border-color: #9aa3b2;
+  background: #656e7d;
 }
 
 @media (max-width: 960px) {
