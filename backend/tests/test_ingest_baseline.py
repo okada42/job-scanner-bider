@@ -25,6 +25,11 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "get_control",
     ):
         monkeypatch.setattr(scanner_mod, name, getattr(sqlite_store, name))
+
+    async def _no_discord(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(scanner_mod, "notify_new_job", _no_discord)
     source = sqlite_store.insert_source(
         {
             "name": "cw search",

@@ -1,4 +1,4 @@
-from app.integrations.discord import build_new_job_payload
+from app.integrations.discord import build_new_job_payload, job_post_url
 
 
 def test_crowdworks_embed_uses_red_and_web_bracket():
@@ -20,7 +20,9 @@ def test_crowdworks_embed_uses_red_and_web_bracket():
     assert embed["color"] == 0xE53935
     assert embed["title"].startswith("🔔[Crowdworks_Web]")
     assert "(image)" in embed["title"]
-    assert embed["url"] == "https://crowdworks.jp/public/jobs/13424135"
+    assert payload["content"] == "https://crowdworks.jp/public/jobs/13424135"
+    assert "`https://crowdworks.jp/public/jobs/13424135`" in embed["description"]
+    assert embed["fields"][0]["value"] == "`https://crowdworks.jp/public/jobs/13424135`"
     assert "🔴 discuss · PTK53" in embed["description"]
     assert "Judgment ✅可" in embed["description"]
     assert "💰 ¥5,000" in embed["description"]
@@ -54,3 +56,16 @@ def test_lancers_and_coconala_use_platform_colors():
     assert coco["color"] == 0x00C853
     assert coco["title"].startswith("🔔[Coconala]")
     assert "🟢" in coco["description"]
+
+
+def test_job_post_url_is_canonical_without_query():
+    assert (
+        job_post_url(
+            {
+                "platform": "crowdworks",
+                "external_job_id": "13424135",
+                "url": "https://crowdworks.jp/public/jobs/13424135?ref=list",
+            }
+        )
+        == "https://crowdworks.jp/public/jobs/13424135"
+    )

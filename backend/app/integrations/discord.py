@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime, timezone
 
@@ -97,12 +98,29 @@ def _kind(job: dict) -> str:
     return "discuss"
 
 
+def job_post_url(job: dict) -> str:
+    """Canonical listing URL that can be copied from Discord as plain text."""
+    platform = (job.get("platform") or "").lower()
+    jid = str(job.get("external_job_id") or "").strip()
+    raw = (job.get("url") or "").strip()
+    templates = {
+        "crowdworks": "https://crowdworks.jp/public/jobs/{id}",
+        "lancers": "https://www.lancers.jp/work/detail/{id}",
+        "coconala": "https://coconala.com/requests/{id}",
+    }
+    if jid and platform in templates:
+        return templates[platform].format(id=jid)
+    if raw.startswith("https://") or raw.startswith("http://"):
+        return raw.split("#")[0].split("?")[0].rstrip("/")
+    return raw
+
+
 def build_new_job_payload(job: dict) -> dict:
     platform = (job.get("platform") or "").lower()
     style = _style(platform)
     title = (job.get("title") or "(no title)").strip()
     client = (job.get("client") or "—").strip() or "—"
-    url = (job.get("url") or "").strip()
+    url = job_post_url(job)
     extra = job.get("extra") if isinstance(job.get("extra"), dict) else {}
     if platform == "crowdworks":
         job_cid = job.get("category_id") or extra.get("category_id") or job.get("category")
@@ -130,7 +148,7 @@ def build_new_job_payload(job: dict) -> dict:
     lines = [
         f"{style['dot']} {_kind(job)} · {client}",
         "",
-        url,
+        f"`{url}`" if url else "",
         "",
         judgment,
     ]
@@ -147,10 +165,16 @@ def build_new_job_payload(job: dict) -> dict:
     }
     if url:
         embed["url"] = url
-    return {"embeds": [embed]}
+        embed["fields"] = [{"name": "URL", "value": f"`{url}`", "inline": False}]
+    payload = {"embeds": [embed]}
+    if url:
+        payload["content"] = url
+    return payload
 
 
 async def notify_new_job(job: dict) -> None:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
     if not settings.discord_webhook_url:
         return
     payload = build_new_job_payload(job)
