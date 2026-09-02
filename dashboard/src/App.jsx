@@ -233,7 +233,10 @@ export default function App() {
               <th>Platform</th>
               <th>Interval</th>
               <th>Last scan</th>
-              <th>Found</th>
+              <th>
+                Found
+                <div className="muted">today</div>
+              </th>
               <th></th>
             </tr>
           </thead>

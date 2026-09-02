@@ -306,6 +306,27 @@ def job_counts_by_source() -> dict[str, int]:
     return {str(r["source_id"]): int(r["n"]) for r in rows if r["source_id"]}
 
 
+def job_counts_since_by_source(since_iso: str) -> dict[str, int]:
+    """Jobs recorded at or after since_iso, grouped by source (Found today)."""
+    bound = (since_iso or "").replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(bound)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        prefix = parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        prefix = bound[:19]
+    conn = connect()
+    rows = conn.execute(
+        """select source_id, count(*) as n from jobs
+           where source_id is not null and source_id != ''
+             and created_at >= ?
+           group by source_id""",
+        (prefix,),
+    ).fetchall()
+    return {str(r["source_id"]): int(r["n"]) for r in rows if r["source_id"]}
+
+
 def get_source(source_id: str) -> dict | None:
     conn = connect()
     row = conn.execute("select * from scanner_sources where id = ?", (source_id,)).fetchone()

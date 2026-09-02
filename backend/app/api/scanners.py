@@ -1,6 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.auth import require_token
+from app.core.clock import local_day_start_iso
 from app.core.scanner import scan_source
 from app.core.scheduler import scheduler_alive
 from app.db import PLATFORMS
@@ -12,6 +13,7 @@ from app.store import (
     get_source,
     insert_source,
     job_counts_by_source,
+    job_counts_since_by_source,
     list_sources,
     update_control,
     update_source,
@@ -24,20 +26,18 @@ async def _baseline_scan(source: dict) -> None:
     except Exception as exc:
         update_source(source["id"], {"last_error": str(exc)[:500]})
 
+
 def _sources_with_found() -> list[dict]:
     sources = list_sources()
     counts = job_counts_by_source()
+    today = job_counts_since_by_source(local_day_start_iso())
     out = []
     for source in sources:
         row = dict(source)
-        stored = int(counts.get(str(source.get("id")), 0) or 0)
-        parsed = source.get("last_job_count")
-        try:
-            parsed_n = int(parsed) if parsed is not None else 0
-        except (TypeError, ValueError):
-            parsed_n = 0
+        sid = str(source.get("id") or "")
+        stored = int(counts.get(sid, 0) or 0)
         row["job_count"] = stored
-        row["found"] = parsed_n if parsed_n > 0 else stored
+        row["found"] = int(today.get(sid, 0) or 0)
         row["listing_total"] = source.get("last_listing_total")
         out.append(row)
     return out

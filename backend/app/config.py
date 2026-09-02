@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     backend_port: int = 8000
     job_scanner_db: str = ""
     job_scanner_local_store: str = ""
+    # Calendar day for the Sources "Found" column. Midnight here resets the count.
+    scanner_tz: str = "Asia/Tokyo"
 
 
 settings = Settings()
