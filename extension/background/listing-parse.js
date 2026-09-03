@@ -143,8 +143,10 @@ function parseCrowdWorksDetail(html) {
       .replace(/^仕事の詳細\s*/, "")
       .trim();
   }
-  const posted = page.match(/掲載日[\s\S]{0,240}?(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)/);
-  const postedLabel = posted ? posted[1].replace(/\s+/g, "") : "";
+  const posted = page.match(
+    /掲載日[\s\S]{0,280}?(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日(?:\s*[月火水木金土日]曜日)?(?:\s*\d{1,2}:\d{2})?)/
+  );
+  const postedLabel = posted ? posted[1].replace(/\s+/g, " ").trim() : "";
   const dates = globalThis.JobBiderDates;
   const postedAt = dates ? dates.parseJpDate(postedLabel) : null;
   let achievement = "";

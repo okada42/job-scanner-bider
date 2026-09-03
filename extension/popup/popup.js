@@ -1,9 +1,15 @@
-function slotLine(slot, parked) {
-  return JobBiderCard.jobCardHtml(slot, { parked: Boolean(parked) });
+function slotLine(slot, parked, focused) {
+  return JobBiderCard.jobCardHtml(slot, {
+    parked: Boolean(parked),
+    sent: !parked,
+    opened: true,
+    skip: !parked,
+    focused: Boolean(focused),
+  });
 }
 
 function jobLine(job) {
-  return JobBiderCard.jobCardHtml(job);
+  return JobBiderCard.jobCardHtml(job, { opened: Boolean(job.openedOnce) });
 }
 
 async function refresh() {
@@ -23,8 +29,8 @@ async function refresh() {
   const slots = state.activeSlots || (state.currentJob ? [state.currentJob] : []);
   const parked = state.parkedSlots || [];
   document.getElementById("slotList").innerHTML = [
-    ...slots.map((slot) => slotLine(slot, false)),
-    ...parked.map((slot) => slotLine(slot, true)),
+    ...slots.map((slot) => slotLine(slot, false, state.focusedTabId && slot.tabId === state.focusedTabId)),
+    ...parked.map((slot) => slotLine(slot, true, false)),
   ].join("");
   if (!state.hasToken) {
     el.textContent = "API token is missing. Open Options.";

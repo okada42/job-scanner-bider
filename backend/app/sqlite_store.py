@@ -140,6 +140,9 @@ def connect() -> sqlite3.Connection:
             )"""
         )
         conn.execute("create index if not exists bider_claims_actor_idx on bider_claims (actor, status)")
+        claim_cols = {r[1] for r in conn.execute("pragma table_info(bider_claims)").fetchall()}
+        if "day" not in claim_cols:
+            conn.execute("alter table bider_claims add column day text")
         conn.execute(
             "insert or ignore into scanner_control (id, enabled, platforms, record_all, updated_at) values (1, 0, ?, 1, ?)",
             (json.dumps(DEFAULT_CONTROL["platforms"]), now_iso()),
@@ -603,17 +606,24 @@ _CLAIM_BLOCK = (
 )
 
 
+def claim_day() -> str:
+    from app.core.clock import scanner_zone
+
+    return datetime.now(scanner_zone()).strftime("%Y-%m-%d")
+
+
 def upsert_claim(job_id: str, actor: str, status: str, url: str | None = None) -> None:
     if not job_id or not actor:
         return
     conn = connect()
     now = now_iso()
+    day = claim_day()
     with _lock:
         conn.execute(
-            """insert into bider_claims (job_id, actor, status, url, updated_at)
-               values (?, ?, ?, ?, ?)
-               on conflict(job_id, actor) do update set status = excluded.status, url = coalesce(excluded.url, bider_claims.url), updated_at = excluded.updated_at""",
-            (job_id, actor, status, url, now),
+            """insert into bider_claims (job_id, actor, status, url, updated_at, day)
+               values (?, ?, ?, ?, ?, ?)
+               on conflict(job_id, actor) do update set status = excluded.status, url = coalesce(excluded.url, bider_claims.url), updated_at = excluded.updated_at, day = excluded.day""",
+            (job_id, actor, status, url, now, day),
         )
         conn.commit()
 
@@ -624,8 +634,8 @@ def actor_active_count(actor: str) -> int:
     conn = connect()
     placeholders = ",".join("?" * len(_ACTIVE_STATUSES))
     row = conn.execute(
-        f"select count(*) as n from bider_claims where actor = ? and status in ({placeholders})",
-        (actor, *_ACTIVE_STATUSES),
+        f"select count(*) as n from bider_claims where actor = ? and day = ? and status in ({placeholders})",
+        (actor, claim_day(), *_ACTIVE_STATUSES),
     ).fetchone()
     return int(row["n"] if row else 0)
 
@@ -635,28 +645,20 @@ def actor_active_jobs(actor: str, limit: int = 10) -> list[dict]:
         return active_jobs(limit)
     conn = connect()
     placeholders = ",".join("?" * len(_ACTIVE_STATUSES))
-    rows = conn.execute(
-        f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
-            join bider_claims c on c.job_id = jobs.id
-            where c.actor = ? and c.status in ({placeholders})
-            order by c.updated_at desc limit ?""",
-        (actor, *_ACTIVE_STATUSES, int(limit)),
-    ).fetchall()
-    out = []
-    for row in rows:
-        job = _job_row(row)
-        job["claim_status"] = row["status"] if "status" in row.keys() else None
-        out.append(job)
-    # claim status is jobs.status from the join ambiguity — fetch from claims
+    day = claim_day()
     claims = {
         r["job_id"]: r["status"]
         for r in conn.execute(
-            f"select job_id, status from bider_claims where actor = ? and status in ({placeholders})",
-            (actor, *_ACTIVE_STATUSES),
+            f"select job_id, status from bider_claims where actor = ? and day = ? and status in ({placeholders})",
+            (actor, day, *_ACTIVE_STATUSES),
         ).fetchall()
     }
-    for job in out:
-        job["claim_status"] = claims.get(job["id"])
+    out = []
+    for jid, status in list(claims.items())[: int(limit)]:
+        job = get_job(jid)
+        if job:
+            job["claim_status"] = status
+            out.append(job)
     return out
 
 
@@ -666,13 +668,14 @@ def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
     conn = connect()
     block = ",".join("?" * len(_CLAIM_BLOCK))
     pool = ",".join("?" * 7)
+    day = claim_day()
     rows = conn.execute(
         f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
             where jobs.status in ({pool})
             {_NEW_ONLY_SQL}
             and not exists (
               select 1 from bider_claims c
-              where c.job_id = jobs.id and c.actor = ? and c.status in ({block})
+              where c.job_id = jobs.id and c.actor = ? and c.day = ? and c.status in ({block})
             )
             order by jobs.detected_at desc limit ?""",
         (
@@ -684,6 +687,7 @@ def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
             "SKIPPED",
             "COMPLETED",
             actor,
+            day,
             *_CLAIM_BLOCK,
             int(limit),
         ),
@@ -698,9 +702,9 @@ def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
     rows = conn.execute(
         f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
             join bider_claims c on c.job_id = jobs.id
-            where c.actor = ? and c.status = 'SKIPPED'
+            where c.actor = ? and c.day = ? and c.status = 'SKIPPED'
             order by c.updated_at desc limit ?""",
-        (actor, int(limit)),
+        (actor, claim_day(), int(limit)),
     ).fetchall()
     out = [_job_row(r) for r in rows]
     for job in out:

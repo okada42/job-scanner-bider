@@ -472,36 +472,61 @@ def active_job_count() -> int:
         return 0
 
 
+def claim_day() -> str:
+    from app.core.clock import scanner_zone
+
+    return datetime.now(scanner_zone()).strftime("%Y-%m-%d")
+
+
+def _claim_is_today(row: dict) -> bool:
+    from app.core.clock import local_day_start, parse_when
+
+    if not row:
+        return False
+    day = claim_day()
+    raw_day = str(row.get("day") or "")[:10]
+    if raw_day:
+        return raw_day == day
+    dt = parse_when(row.get("updated_at"))
+    return bool(dt and dt >= local_day_start())
+
+
 def upsert_claim(job_id: str, actor: str, status: str, url: str | None = None) -> None:
     if not job_id or not actor:
         return
+    payload = {
+        "job_id": job_id,
+        "actor": actor,
+        "status": status,
+        "url": url,
+        "updated_at": now_iso(),
+        "day": claim_day(),
+    }
     try:
-        supabase().table("bider_claims").upsert(
-            {
-                "job_id": job_id,
-                "actor": actor,
-                "status": status,
-                "url": url,
-                "updated_at": now_iso(),
-            }
-        ).execute()
+        supabase().table("bider_claims").upsert(payload).execute()
     except Exception:
-        return
+        payload.pop("day", None)
+        try:
+            supabase().table("bider_claims").upsert(payload).execute()
+        except Exception:
+            return
 
 
 def actor_active_count(actor: str) -> int:
     if not actor:
         return active_job_count()
     try:
-        res = (
+        rows = (
             supabase()
             .table("bider_claims")
-            .select("job_id", count="exact")
+            .select("job_id,status,day,updated_at")
             .eq("actor", actor)
             .in_("status", list(_ACTIVE_STATUSES))
             .execute()
+            .data
+            or []
         )
-        return res.count or 0
+        return sum(1 for row in rows if _claim_is_today(row))
     except Exception:
         return active_job_count()
 
@@ -513,21 +538,25 @@ def actor_active_jobs(actor: str, limit: int = 10) -> list[dict]:
         claims = (
             supabase()
             .table("bider_claims")
-            .select("job_id,status,url")
+            .select("job_id,status,url,day,updated_at")
             .eq("actor", actor)
             .in_("status", list(_ACTIVE_STATUSES))
             .order("updated_at", desc=True)
-            .limit(int(limit))
+            .limit(40)
             .execute()
             .data
             or []
         )
         out = []
         for claim in claims:
+            if not _claim_is_today(claim):
+                continue
             job = get_job(str(claim.get("job_id") or ""))
             if job:
                 job["claim_status"] = claim.get("status")
                 out.append(job)
+            if len(out) >= int(limit):
+                break
         return out
     except Exception:
         return active_jobs(limit)
@@ -538,8 +567,12 @@ def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
         return queued_jobs(limit)
     try:
         sb = supabase()
-        claims = sb.table("bider_claims").select("job_id,status").eq("actor", actor).execute().data or []
-        blocked = {str(c.get("job_id")) for c in claims if c.get("status") in _CLAIM_BLOCK}
+        claims = sb.table("bider_claims").select("job_id,status,day,updated_at").eq("actor", actor).execute().data or []
+        blocked = {
+            str(c.get("job_id"))
+            for c in claims
+            if c.get("status") in _CLAIM_BLOCK and _claim_is_today(c)
+        }
         baseline = _baseline_job_ids(sb)
         jobs = (
             sb.table("jobs")
@@ -571,21 +604,25 @@ def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
         claims = (
             supabase()
             .table("bider_claims")
-            .select("job_id,status")
+            .select("job_id,status,day,updated_at")
             .eq("actor", actor)
             .eq("status", "SKIPPED")
             .order("updated_at", desc=True)
-            .limit(int(limit))
+            .limit(50)
             .execute()
             .data
             or []
         )
         out = []
         for claim in claims:
+            if not _claim_is_today(claim):
+                continue
             job = get_job(str(claim.get("job_id") or ""))
             if job:
                 job["claim_status"] = "SKIPPED"
                 out.append(job)
+            if len(out) >= int(limit):
+                break
         return out
     except Exception:
         return list_jobs(status="SKIPPED", limit=limit, new_only=True)

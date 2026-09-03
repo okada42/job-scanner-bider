@@ -14,14 +14,6 @@ function jobSafeUrl(url) {
   return "";
 }
 
-function jobShortDate(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const iso = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (iso) return iso[1];
-  return raw.replace(/\s+/g, " ");
-}
-
 function jobExtract(job) {
   return job?.extract && typeof job.extract === "object" ? job.extract : {};
 }
@@ -36,14 +28,25 @@ function jobClientName(job) {
 
 function jobPosted(job) {
   const extract = jobExtract(job);
-  return jobShortDate(
+  const raw = String(
     extract.postedLabel || extract.postedAt || job?.posted_at || job?.postedAt || job?.detected_at || ""
-  );
+  ).trim();
+  if (!raw) return "";
+  const dates = globalThis.JobBiderDates;
+  if (dates && dates.parseJpDate && dates.formatJpDate) {
+    const parts = dates.parseJpDate(raw);
+    if (parts) return dates.formatJpDate(parts);
+  }
+  const iso = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?/);
+  if (iso) return iso[2] ? `${iso[1]} ${iso[2]}` : iso[1];
+  return raw.replace(/\s+/g, " ");
 }
 
 function jobDeadline(job) {
   const extract = jobExtract(job);
-  return jobShortDate(job?.deadline || extract.deadline || extract.dueAt || "");
+  return String(job?.deadline || extract.deadline || extract.dueAt || "")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 function jobBudget(job) {
@@ -57,10 +60,27 @@ function jobIsParked(job, parked) {
   return status === "SKIPPED" || status === "CLOSED" || status === "FAILED";
 }
 
+function jobTag(job, opts) {
+  const options = opts || {};
+  const reason = String(job?.parkedReason || "").toLowerCase();
+  if (reason === "closed") return "closed";
+  const status = String(job?.claim_status || job?.status || "").toUpperCase();
+  if (options.parked || status === "SKIPPED" || status === "FAILED" || reason === "skipped") return "skipped";
+  if (status === "CLOSED") return "closed";
+  if (options.sent || ["SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER"].includes(status)) {
+    return "sent";
+  }
+  return "queued";
+}
+
 function compactFlag(ok, label) {
   if (ok === true) return `${label}✓`;
   if (ok === false) return `${label}✗`;
   return `${label}—`;
+}
+
+function jobOpenedOnce(job) {
+  return Boolean(job?.openedOnce || job?.openedAt);
 }
 
 function jobCardHtml(job, opts) {
@@ -69,9 +89,13 @@ function jobCardHtml(job, opts) {
   const href = jobSafeUrl(job.url || extract.url);
   const parked = jobIsParked(job, options.parked);
   const id = jobEsc(job.id || "");
+  const tag = jobTag(job, options);
+  const focused = Boolean(options.focused);
   const action = parked
-    ? `<button type="button" data-reopen="${id}">Reopen</button>`
-    : `<button type="button" data-open="${id}">Open</button>`;
+    ? `<button type="button" class="mini" data-reopen="${id}">Reopen</button>`
+    : `<button type="button" class="mini" data-open="${id}">Open</button>${
+        options.skip ? `<button type="button" class="mini" data-skip="${id}">Skip</button>` : ""
+      }`;
   const bits = [
     jobClientName(job) || "—",
     compactFlag(extract.identity, "本人"),
@@ -80,10 +104,21 @@ function jobCardHtml(job, opts) {
     `掲載 ${jobPosted(job) || "—"}`,
     `締切 ${jobDeadline(job) || "—"}`,
   ];
-  return `<article class="row${parked ? " parked" : ""}" data-id="${id}">
-    <div class="line1"><span class="url" title="${jobEsc(href || "")}">${jobEsc(href || "—")}</span>${action}</div>
+  const extra =
+    jobOpenedOnce(job) || options.opened
+      ? `<div class="line3">募集実績 ${jobEsc(extract.achievement || "—")} · 完了率 ${jobEsc(
+          extract.completionRate || "—"
+        )}</div>`
+      : "";
+  return `<article class="row${parked ? " parked" : ""}${focused ? " focused" : ""}" data-id="${id}">
+    <div class="line1">
+      <span class="tag tag-${tag}">${tag}</span>
+      <span class="url" title="${jobEsc(href || "")}">${jobEsc(href || "—")}</span>
+      ${action}
+    </div>
     <div class="line2">${bits.map(jobEsc).join(" · ")}</div>
+    ${extra}
   </article>`;
 }
 
-globalThis.JobBiderCard = { jobCardHtml, jobIsParked };
+globalThis.JobBiderCard = { jobCardHtml, jobIsParked, jobTag };

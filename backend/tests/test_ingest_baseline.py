@@ -409,6 +409,29 @@ def test_two_actors_can_claim_the_same_job_url(db, monkeypatch):
     assert sqlite_store.actor_active_count("bob") == 1
 
 
+def test_yesterday_claim_does_not_block_today(db, monkeypatch):
+    from app.core.scanner import claim_next_job
+
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    source = sqlite_store.get_source(db["id"])
+    asyncio.run(ingest_jobs([_job("1"), _job("2")], source=source))
+    sqlite_store.update_bider_settings({"enabled": True, "mode": "semi-auto", "max_active_jobs": 1})
+    monkeypatch.setattr("app.store.active_job_count", sqlite_store.active_job_count)
+    monkeypatch.setattr("app.store.update_job", sqlite_store.update_job)
+    monkeypatch.setattr("app.store.queued_jobs", sqlite_store.queued_jobs)
+    monkeypatch.setattr("app.store.upsert_claim", sqlite_store.upsert_claim)
+    monkeypatch.setattr("app.store.actor_active_count", sqlite_store.actor_active_count)
+    monkeypatch.setattr("app.store.queued_for_actor", sqlite_store.queued_for_actor)
+    first = claim_next_job(force=True, actor="alice")
+    assert first
+    sqlite_store.upsert_claim(first["id"], "alice", "SKIPPED", first.get("url"))
+    conn = sqlite_store.connect()
+    conn.execute("update bider_claims set day = '2020-01-01' where actor = 'alice'")
+    conn.commit()
+    again = claim_next_job(force=True, actor="alice")
+    assert again and again["id"] == first["id"]
+
+
 def test_list_jobs_includes_status_at_for_processing(db):
     job = sqlite_store.insert_job(
         {

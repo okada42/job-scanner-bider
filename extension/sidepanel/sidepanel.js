@@ -18,11 +18,20 @@ async function paint() {
         ? `${slots.length} open job${slots.length === 1 ? "" : "s"}`
         : "No active jobs";
     document.getElementById("slots").innerHTML = slots.length
-      ? slots.map((slot) => JobBiderCard.jobCardHtml(slot, { skip: true })).join("")
+      ? slots
+          .map((slot) =>
+            JobBiderCard.jobCardHtml(slot, {
+              skip: true,
+              sent: true,
+              opened: true,
+              focused: Boolean(state.focusedTabId && slot.tabId === state.focusedTabId),
+            })
+          )
+          .join("")
       : `<p class="meta">Fill window opens the dashboard Max active count of queued URLs. Each job has Open. Skip or close a tab to take the next queued URL.</p>`;
     document.getElementById("parkedHead").hidden = parked.length === 0;
     document.getElementById("parked").innerHTML = parked
-      .map((slot) => JobBiderCard.jobCardHtml(slot, { parked: true }))
+      .map((slot) => JobBiderCard.jobCardHtml(slot, { parked: true, opened: Boolean(slot.extract) }))
       .join("");
 
     const status = document.getElementById("biderStatus");
@@ -52,7 +61,7 @@ async function paint() {
       box.textContent = shown.size ? "All queued jobs are already listed above." : "No queued jobs yet.";
       return;
     }
-    box.innerHTML = jobs.map((job) => JobBiderCard.jobCardHtml(job)).join("");
+    box.innerHTML = jobs.map((job) => JobBiderCard.jobCardHtml(job, { opened: Boolean(job.openedOnce) })).join("");
   } catch (err) {
     document.getElementById("jobs").textContent = String(err && err.message ? err.message : err);
   }

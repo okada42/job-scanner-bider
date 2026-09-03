@@ -177,9 +177,55 @@ async function readMaxActive() {
   }
 }
 
+async function todayJst() {
+  if (globalThis.JobBiderDates && JobBiderDates.todayJst) return JobBiderDates.todayJst();
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Tokyo" });
+}
+
+async function ensureBiderScope() {
+  const actor = await getActor();
+  const day = await todayJst();
+  const stamp = await chrome.storage.local.get({ biderActor: "", biderDay: "", activeSlots: [], parkedSlots: [] });
+  if (stamp.biderActor === actor && stamp.biderDay === day) return { actor, day };
+  const prevSlots = Array.isArray(stamp.activeSlots) ? stamp.activeSlots : [];
+  const live = [];
+  for (const slot of prevSlots) {
+    if (await tabStillOpen(slot.tabId)) live.push({ ...slot, openedOnce: true });
+  }
+  const openedJobs = {};
+  for (const slot of live) openedJobs[slot.id] = { extract: slot.extract, at: new Date().toISOString() };
+  await chrome.storage.local.set({
+    biderActor: actor,
+    biderDay: day,
+    activeSlots: live,
+    parkedSlots: [],
+    openedJobs,
+  });
+  await chrome.storage.sync.set({ currentJob: live[0] || null });
+  return { actor, day };
+}
+
 async function getSlots() {
+  await ensureBiderScope();
   const local = await chrome.storage.local.get({ activeSlots: [] });
   return Array.isArray(local.activeSlots) ? local.activeSlots : [];
+}
+
+async function getOpenedJobs() {
+  await ensureBiderScope();
+  const local = await chrome.storage.local.get({ openedJobs: {} });
+  return local.openedJobs && typeof local.openedJobs === "object" ? local.openedJobs : {};
+}
+
+async function markOpened(job, extract) {
+  if (!job?.id) return;
+  const opened = await getOpenedJobs();
+  opened[job.id] = {
+    url: job.url,
+    extract: extract || job.extract || null,
+    at: new Date().toISOString(),
+  };
+  await chrome.storage.local.set({ openedJobs: opened });
 }
 
 async function setSlots(slots) {
@@ -188,6 +234,7 @@ async function setSlots(slots) {
 }
 
 async function getParked() {
+  await ensureBiderScope();
   const local = await chrome.storage.local.get({ parkedSlots: [] });
   return Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
 }
@@ -402,6 +449,7 @@ async function reviveSlots(slots) {
 async function openPreparedTab(job, extract, focus) {
   const tab = await chrome.tabs.create({ url: job.url, active: Boolean(focus) });
   await markProcessing(job);
+  await markOpened(job, extract);
   if (tab?.id) await runApplyFlow(tab.id, extract, job.id);
   return tab?.id || null;
 }
@@ -417,8 +465,10 @@ function slotFromJob(job, extract, tabId) {
     posted_at: extract.postedLabel || job.posted_at || job.detected_at,
     tabId,
     opened: true,
+    openedOnce: true,
     extract,
     status: job.status || "PROCESSING",
+    claim_status: "PROCESSING",
   };
 }
 
@@ -536,7 +586,7 @@ async function finishSlot(jobId, status, opts = {}) {
     } catch (_) {
       /* already closed on the server */
     }
-    if (park && slot) await parkSlot(slot, status === "SKIPPED" ? "skipped" : "closed");
+    if (park && slot) await parkSlot(slot, opts.reason || (status === "SKIPPED" ? "skipped" : "closed"));
     if (closeTab && slot?.tabId) {
       closingByUs.add(slot.tabId);
       try {
@@ -872,12 +922,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const parked = await getParked();
         const extras = new Map();
         for (const slot of [...slots, ...parked]) extras.set(slot.id, slot.extract || null);
+        const opened = await getOpenedJobs();
         sendResponse({
           ok: true,
-          jobs: jobs.map((job) => ({
-            ...job,
-            extract: drafts[job.id] || extras.get(job.id) || job.extract || null,
-          })),
+          jobs: jobs.map((job) => {
+            const openedRow = opened[job.id];
+            return {
+              ...job,
+              openedOnce: Boolean(openedRow),
+              extract: drafts[job.id] || extras.get(job.id) || openedRow?.extract || job.extract || null,
+            };
+          }),
           backendUrl: (await cfg()).backendUrl,
         });
       } catch (err) {
@@ -887,6 +942,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse(await testConnection());
     } else if (msg.type === "GET_STATE") {
       const c = await cfg();
+      await ensureBiderScope();
       const local = await chrome.storage.local.get({
         scanStatus: null,
         pageExtract: null,
@@ -895,9 +951,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         parkedSlots: [],
         profileUser: "",
         profileKey: "",
+        biderDay: "",
       });
       const slots = Array.isArray(local.activeSlots) ? local.activeSlots : [];
       const parked = Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
+      let focusedTabId = null;
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        focusedTabId = tab?.id || null;
+      } catch (_) {
+        /* ignore */
+      }
       sendResponse({
         ...c,
         currentJob: slots[0] || c.currentJob,
@@ -906,6 +970,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         hasToken: Boolean(c.token),
         profileUser: local.profileUser || "",
         profileKey: local.profileKey || "",
+        biderDay: local.biderDay || "",
+        focusedTabId,
         scanStatus: local.scanStatus || null,
         pageExtract: local.pageExtract || local.applyDraft || slots[0]?.extract || null,
         applyDraft: local.applyDraft || slots[0]?.extract || null,
@@ -922,7 +988,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
   getSlots().then((slots) => {
     const slot = slots.find((s) => s.tabId === tabId);
-    if (slot) finishSlot(slot.id, "SKIPPED", { park: true, closeTab: false });
+    if (slot) finishSlot(slot.id, "SKIPPED", { park: true, closeTab: false, reason: "closed" });
   });
 });
 
