@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Job Scanner + Bider",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Scans listings from a logged-in profile and prepares applications. Never submits.",
-  "permissions": ["storage", "sidePanel", "tabs", "alarms", "notifications"],
+  "permissions": ["storage", "sidePanel", "tabs", "alarms", "notifications", "clipboardWrite"],
   "host_permissions": [
     "http://localhost:8000/*",
     "http://127.0.0.1:8000/*",
@@ -26,7 +26,7 @@
   "content_scripts": [
     {
       "matches": ["https://crowdworks.jp/*", "https://www.crowdworks.jp/*"],
-      "js": ["platforms/crowdworks/adapter.js", "content/content-script.js"],
+      "js": ["shared/dates.js", "platforms/crowdworks/adapter.js", "content/content-script.js"],
       "run_at": "document_idle"
     },
     {

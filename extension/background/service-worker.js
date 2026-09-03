@@ -1,4 +1,5 @@
 importScripts("../shared/backend.js");
+importScripts("../shared/dates.js");
 importScripts("listing-parse.js");
 
 const DEFAULTS = {
@@ -141,11 +142,75 @@ async function maybeOpen(job) {
   if (!c.applyEnabled || c.paused) return;
   if (c.currentJob && c.currentJob.id !== job.id) return;
   await chrome.storage.sync.set({ currentJob: job });
-  await chrome.tabs.create({ url: job.url, active: true });
+  await chrome.storage.local.set({ pageExtract: null });
+  const tab = await chrome.tabs.create({ url: job.url, active: true });
   await api(`/api/jobs/${job.id}/status`, {
     method: "POST",
     body: JSON.stringify({ status: "PROCESSING" }),
   });
+  if (tab?.id) await runApplyFlow(tab.id);
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function waitTabComplete(tabId, timeoutMs = 20000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    const listener = (id, info) => {
+      if (id === tabId && info.status === "complete") finish();
+    };
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || (tab && tab.status === "complete")) {
+        finish();
+        return;
+      }
+      chrome.tabs.onUpdated.addListener(listener);
+      setTimeout(finish, timeoutMs);
+    });
+  });
+}
+
+async function sendToTab(tabId, msg, tries = 10) {
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, msg);
+      if (res) return res;
+    } catch (_) {
+      /* content script may not be injected yet */
+    }
+    await sleep(350);
+  }
+  return { ok: false, error: "Page script did not respond." };
+}
+
+async function rememberExtract(extract) {
+  if (!extract) return;
+  await chrome.storage.local.set({ pageExtract: extract });
+}
+
+async function runApplyFlow(tabId) {
+  await waitTabComplete(tabId);
+  let extract = null;
+  let first = await sendToTab(tabId, { type: "AUTO_APPLY" });
+  if (first?.extract) {
+    extract = first.extract;
+    await rememberExtract(extract);
+  }
+  if (first?.stage === "clicked_apply") {
+    await waitTabComplete(tabId);
+    const second = await sendToTab(tabId, { type: "AUTO_APPLY", extract });
+    if (second?.extract) await rememberExtract(second.extract);
+    return second;
+  }
+  return first;
 }
 
 async function claimAndOpen() {
@@ -354,6 +419,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           });
         }
         await chrome.storage.sync.set({ currentJob: null });
+        await chrome.storage.local.set({ pageExtract: null });
         const result = await claimAndOpen();
         sendResponse({ ok: Boolean(result.ok), ...result });
       } catch (err) {
@@ -365,17 +431,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: false, error: "No active tab." });
         return;
       }
-      chrome.tabs.sendMessage(tab.id, { type: "PREPARE" }, (res) => {
-        if (chrome.runtime.lastError) {
-          sendResponse({
-            ok: false,
-            error: "Open a CrowdWorks, Lancers, or Coconala job page first.",
-          });
-          return;
-        }
-        sendResponse(res || { ok: false, error: "Prepare did not run on this page." });
-      });
+      const stored = (await chrome.storage.local.get({ pageExtract: null })).pageExtract;
+      const res = await sendToTab(tab.id, { type: "PREPARE", extract: stored });
+      if (res?.extract) await rememberExtract(res.extract);
+      sendResponse(res || { ok: false, error: "Prepare did not run on this page." });
       return;
+    } else if (msg.type === "PAGE_EXTRACT") {
+      await rememberExtract(msg.extract);
+      sendResponse({ ok: true });
     } else if (msg.type === "LIST_JOBS") {
       try {
         const jobs = await api("/api/jobs?limit=25&new_only=true");
@@ -387,11 +450,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse(await testConnection());
     } else if (msg.type === "GET_STATE") {
       const c = await cfg();
-      const local = await chrome.storage.local.get({ scanStatus: null });
+      const local = await chrome.storage.local.get({ scanStatus: null, pageExtract: null });
       sendResponse({
         ...c,
         hasToken: Boolean(c.token),
         scanStatus: local.scanStatus || null,
+        pageExtract: local.pageExtract || null,
       });
     }
   })();

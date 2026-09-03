@@ -20,14 +20,27 @@ function showActionError(text) {
   el.textContent = text;
 }
 
+function paintClient(extract, job) {
+  const name = extract?.client || job?.client || "—";
+  document.getElementById("clientName").textContent = `👤 ${name}`;
+  document.getElementById("clientVerify").textContent = `Verification ${extract?.verification || "—"}`;
+  document.getElementById("clientRecord").textContent = `募集実績 ${extract?.achievement || "—"}`;
+  document.getElementById("clientRate").textContent = `完了率 ${extract?.completionRate || "—"}`;
+  const desc = extract?.details || extract?.description || "";
+  if (desc) document.getElementById("desc").textContent = desc.slice(0, 4000);
+}
+
 async function paint() {
   try {
     const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
     const job = state.currentJob;
-    document.getElementById("title").textContent = job?.title || (state.paused ? "Paused" : "No active job");
-    document.getElementById("budget").textContent = job?.budget ? `💰 ${job.budget}` : "";
-    document.getElementById("client").textContent = job?.client ? `👤 ${job.client}` : "";
-    document.getElementById("deadline").textContent = job?.deadline ? `📅 ${job.deadline}` : "";
+    const extract = state.pageExtract;
+    document.getElementById("statusLine").textContent = job
+      ? extract?.client || job.client || "Active job"
+      : state.paused
+        ? "Paused"
+        : "No active job";
+    paintClient(extract, job);
 
     const status = document.getElementById("biderStatus");
     if (!state.hasToken) {
@@ -84,9 +97,11 @@ document.getElementById("next").onclick = () => runQueueAction("NEXT");
 document.getElementById("options").onclick = () => chrome.runtime.openOptionsPage();
 document.getElementById("prepare").onclick = async () => {
   const res = await chrome.runtime.sendMessage({ type: "PREPARE_TAB" });
+  if (res?.extract) paintClient(res.extract);
   if (res?.description) document.getElementById("desc").textContent = res.description.slice(0, 4000);
   else if (res?.stage) document.getElementById("desc").textContent = `Stage: ${res.stage}`;
   else document.getElementById("desc").textContent = res?.error || "Prepare failed.";
+  await paint();
 };
 
 chrome.storage.onChanged.addListener(paint);

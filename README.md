@@ -101,6 +101,8 @@ The search profile **must stay logged in**. Railway’s HTML GET is anonymous; i
 
 The popup and side panel **FROM DATABASE** list is `GET /api/jobs` — the same table the dashboard uses. Scan still POSTs new listings into that table; it does not keep a second copy.
 
+**CrowdWorks apply (never submits):** NEXT opens the job URL, copies title + 仕事の詳細, shows client name / verification / 募集実績 / 完了率 in the side panel (not the job title), clicks **応募画面へ**, then on the application form fills **完了予定日** to one month after 掲載日 (if those dropdowns exist) and pastes the copied text into **新しいテンプレートを作成** / the message box.
+
 `host_permissions` already include `https://*.up.railway.app/*`. For a custom domain, add that origin to `extension/manifest.json` and reload.
 
 ---
