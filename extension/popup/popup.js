@@ -91,10 +91,11 @@ async function onJobClick(event) {
   const open = event.target.getAttribute("data-open");
   const reopen = event.target.getAttribute("data-reopen");
   const skip = event.target.getAttribute("data-skip");
-  if (!open && !reopen && !skip) return;
+  const focus = event.target.getAttribute("data-focus");
+  if (!open && !reopen && !skip && !focus) return;
   const res = await chrome.runtime.sendMessage({
-    type: skip ? "SKIP" : open ? "OPEN_JOB" : "REOPEN_JOB",
-    jobId: open || reopen || skip,
+    type: skip ? "SKIP" : focus ? "FOCUS_JOB" : open ? "OPEN_JOB" : "REOPEN_JOB",
+    jobId: open || reopen || skip || focus,
   });
   if (res?.error) document.getElementById("status").textContent = res.error;
   await refresh();

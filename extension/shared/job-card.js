@@ -93,7 +93,7 @@ function jobCardHtml(job, opts) {
   const focused = Boolean(options.focused);
   const action = parked
     ? `<button type="button" class="mini" data-reopen="${id}">Reopen</button>`
-    : `<button type="button" class="mini" data-open="${id}">Open</button>${
+    : `<button type="button" class="mini" data-open="${id}">Open</button><button type="button" class="mini" data-focus="${id}">Focus</button>${
         options.skip ? `<button type="button" class="mini" data-skip="${id}">Skip</button>` : ""
       }`;
   const bits = [
@@ -114,7 +114,7 @@ function jobCardHtml(job, opts) {
     <div class="line1">
       <span class="tag tag-${tag}">${tag}</span>
       <span class="url" title="${jobEsc(href || "")}">${jobEsc(href || "—")}</span>
-      ${action}
+      <span class="acts">${action}</span>
     </div>
     <div class="line2">${bits.map(jobEsc).join(" · ")}</div>
     ${extra}

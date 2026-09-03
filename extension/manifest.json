@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Job Scanner + Bider",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "Scans listings from a logged-in profile and prepares applications. Never submits.",
   "permissions": ["storage", "sidePanel", "tabs", "alarms", "notifications"],
   "host_permissions": [

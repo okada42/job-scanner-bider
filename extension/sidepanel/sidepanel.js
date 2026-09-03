@@ -80,9 +80,11 @@ function onSlotClick(event) {
   const open = event.target.getAttribute("data-open");
   const reopen = event.target.getAttribute("data-reopen");
   const skip = event.target.getAttribute("data-skip");
+  const focus = event.target.getAttribute("data-focus");
   if (open) runQueueAction("OPEN_JOB", { jobId: open });
   if (reopen) runQueueAction("REOPEN_JOB", { jobId: reopen });
   if (skip) runQueueAction("SKIP", { jobId: skip });
+  if (focus) runQueueAction("FOCUS_JOB", { jobId: focus });
 }
 
 document.getElementById("slots").addEventListener("click", onSlotClick);

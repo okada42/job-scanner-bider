@@ -59,11 +59,15 @@ async function connect() {
   const url = c.backendUrl.replace(/^http/, "ws") + "/ws/bider?token=" + encodeURIComponent(c.token);
   ws = new WebSocket(url);
   ws.onmessage = async (ev) => {
-    const msg = JSON.parse(ev.data);
-    if (msg.event === "NEW_JOB") {
-      const settings = await cfg();
-      if (!settings.applyEnabled || settings.paused) return;
-      await fillWindow();
+    let msg;
+    try {
+      msg = JSON.parse(ev.data);
+    } catch (_) {
+      return;
+    }
+    const event = String(msg?.event || "").toUpperCase();
+    if (event === "NEW_JOB" || event === "JOB_AVAILABLE") {
+      await onJobAlert(msg.job);
     }
   };
   ws.onclose = () => {
@@ -166,6 +170,31 @@ let filling = false;
 let fillAgain = false;
 const finishing = new Set();
 const closingByUs = new Set();
+
+async function pingBiderSocket() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  try {
+    ws.send(JSON.stringify({ action: "PING" }));
+  } catch (_) {
+    /* socket died; next alarm reconnects */
+  }
+}
+
+async function onJobAlert(job) {
+  const settings = await cfg();
+  if (!settings.applyEnabled || settings.paused) return;
+  await fillWindow();
+  return job;
+}
+
+async function topUpIfNeeded() {
+  const settings = await cfg();
+  if (!settings.applyEnabled || settings.paused) return { ok: true, skipped: true };
+  const slots = await getSlots();
+  const maxActive = await readMaxActive();
+  if (slots.length >= maxActive) return { ok: true, slots, maxActive };
+  return fillWindow();
+}
 
 async function readMaxActive() {
   try {
@@ -554,6 +583,40 @@ async function openSlot(jobId) {
   return { ok: true, job: updated };
 }
 
+async function focusTab(tabId) {
+  if (!tabId) return false;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.windowId) {
+      try {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      } catch (_) {
+        /* window focus is best-effort */
+      }
+    }
+    await chrome.tabs.update(tabId, { active: true });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function focusJob(jobId) {
+  const slots = await getSlots();
+  const parked = await getParked();
+  const slot =
+    (jobId && slots.find((s) => s.id === jobId)) ||
+    (jobId && parked.find((s) => s.id === jobId)) ||
+    (!jobId && slots[0]) ||
+    null;
+  if (slot?.tabId && (await focusTab(slot.tabId))) {
+    return { ok: true, job: slot, focused: true };
+  }
+  const opened = await openSlot(jobId);
+  if (opened?.job?.tabId) await focusTab(opened.job.tabId);
+  return opened;
+}
+
 async function openQueuedJob(jobId) {
   const listed = await listBiderJobs();
   const job = listed.find((row) => row.id === jobId);
@@ -811,7 +874,7 @@ async function testConnection() {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-  chrome.alarms.create(BIDER_ALARM, { periodInMinutes: 1 });
+  chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
   migrateLocalhostIfUnreachable();
   scheduleScanAlarm();
 });
@@ -819,11 +882,16 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
   migrateLocalhostIfUnreachable();
   scheduleScanAlarm();
+  chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
   connect();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === BIDER_ALARM) connect();
+  if (alarm.name === BIDER_ALARM) {
+    pingBiderSocket();
+    connect();
+    topUpIfNeeded();
+  }
   if (alarm.name === SCAN_ALARM) runListingScan();
 });
 
@@ -880,6 +948,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     } else if (msg.type === "OPEN_JOB" || msg.type === "REOPEN_JOB") {
       try {
         sendResponse(await openSlot(msg.jobId));
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
+    } else if (msg.type === "FOCUS_JOB") {
+      try {
+        sendResponse(await focusJob(msg.jobId));
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
@@ -994,4 +1068,5 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 migrateLocalhostIfUnreachable();
 scheduleScanAlarm();
+chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
 connect();
