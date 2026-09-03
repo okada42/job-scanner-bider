@@ -350,6 +350,42 @@ def test_claim_next_stops_at_max_active(db, monkeypatch):
     assert sqlite_store.active_job_count() == 2
 
 
+def test_collect_next_jobs_returns_inflight_when_cap_reached(db, monkeypatch):
+    from app.core.scanner import bider_payload, claim_next_job, collect_next_jobs
+
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    source = sqlite_store.get_source(db["id"])
+    asyncio.run(ingest_jobs([_job("1"), _job("2"), _job("3")], source=source))
+    sqlite_store.update_bider_settings({"enabled": True, "mode": "semi-auto", "max_active_jobs": 1})
+    monkeypatch.setattr("app.store.active_job_count", sqlite_store.active_job_count)
+    monkeypatch.setattr("app.store.update_job", sqlite_store.update_job)
+    monkeypatch.setattr("app.store.queued_jobs", sqlite_store.queued_jobs)
+    monkeypatch.setattr("app.store.active_jobs", sqlite_store.active_jobs)
+    first = claim_next_job()
+    assert first
+    again = collect_next_jobs(3)
+    assert [j["id"] for j in again] == [first["id"]]
+    assert again[0]["url"] == first["url"]
+    assert "posted_at" in bider_payload(first)
+
+
+def test_collect_next_jobs_force_claims_when_paused(db, monkeypatch):
+    from app.core.scanner import claim_next_job, collect_next_jobs
+
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    source = sqlite_store.get_source(db["id"])
+    asyncio.run(ingest_jobs([_job("1"), _job("2"), _job("3")], source=source))
+    sqlite_store.update_bider_settings({"enabled": False, "mode": "paused", "max_active_jobs": 2})
+    monkeypatch.setattr("app.store.active_job_count", sqlite_store.active_job_count)
+    monkeypatch.setattr("app.store.update_job", sqlite_store.update_job)
+    monkeypatch.setattr("app.store.queued_jobs", sqlite_store.queued_jobs)
+    monkeypatch.setattr("app.store.active_jobs", sqlite_store.active_jobs)
+    assert claim_next_job() is None
+    jobs = collect_next_jobs(2, force=True)
+    assert len(jobs) == 2
+    assert all(j.get("url") for j in jobs)
+
+
 def test_list_jobs_includes_status_at_for_processing(db):
     job = sqlite_store.insert_job(
         {

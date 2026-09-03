@@ -1,47 +1,7 @@
-function esc(value) {
-  return String(value || "").replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[ch]));
-}
-
-function safeUrl(url) {
-  const raw = String(url || "");
-  if (raw.startsWith("https://") || raw.startsWith("http://")) return raw;
-  return "";
-}
-
 function showActionError(text) {
   const el = document.getElementById("biderStatus");
   el.className = "meta warn";
   el.textContent = text;
-}
-
-function slotCard(slot, index, mode) {
-  const extract = slot.extract || {};
-  const marks = JobBiderVerify.clientMarks(extract);
-  const href = esc(safeUrl(slot.url || extract.url) || "—");
-  const client = esc(extract.client || slot.client || "—");
-  const price = esc(slot.budget || extract.budget || "—");
-  const parked = mode === "parked";
-  const reason = parked ? esc(slot.parkedReason || "closed") : slot.tabId ? "open" : "tab closed";
-  const action = parked
-    ? `<button type="button" data-reopen="${esc(slot.id)}">Reopen</button>`
-    : `<button type="button" data-open="${esc(slot.id)}">Open</button>
-       <button type="button" data-skip="${esc(slot.id)}">Skip</button>`;
-  return `<article class="slot${parked ? " parked" : ""}" data-id="${esc(slot.id)}">
-    <div class="meta">#${index + 1} · ${reason}</div>
-    <div class="url">${href}</div>
-    <div>👤 ${client}</div>
-    <div class="mark">${esc(marks.identity)}</div>
-    <div class="mark">${esc(marks.rule)}</div>
-    <div class="price">予算 ${price}</div>
-    <div class="meta">募集実績 ${esc(extract.achievement || "—")} · 完了率 ${esc(extract.completionRate || "—")}</div>
-    ${action}
-  </article>`;
 }
 
 async function paint() {
@@ -55,10 +15,12 @@ async function paint() {
         ? `${slots.length} open job${slots.length === 1 ? "" : "s"}`
         : "No active jobs";
     document.getElementById("slots").innerHTML = slots.length
-      ? slots.map((s, i) => slotCard(s, i, "active")).join("")
-      : `<p class="meta">Fill window opens queued jobs. Each URL has Open. Skip or close a tab to take the next queued URL.</p>`;
+      ? slots.map((slot) => JobBiderCard.jobCardHtml(slot, { skip: true })).join("")
+      : `<p class="meta">Fill window opens the dashboard Max active count of queued URLs. Each job has Open. Skip or close a tab to take the next queued URL.</p>`;
     document.getElementById("parkedHead").hidden = parked.length === 0;
-    document.getElementById("parked").innerHTML = parked.map((s, i) => slotCard(s, i, "parked")).join("");
+    document.getElementById("parked").innerHTML = parked
+      .map((slot) => JobBiderCard.jobCardHtml(slot, { parked: true }))
+      .join("");
 
     const status = document.getElementById("biderStatus");
     if (!state.hasToken) {
@@ -81,19 +43,13 @@ async function paint() {
       box.textContent = listed?.error || "Set Backend URL and token in Options.";
       return;
     }
-    const jobs = listed.jobs || [];
+    const shown = new Set([...slots, ...parked].map((slot) => slot.id));
+    const jobs = (listed.jobs || []).filter((job) => job?.id && !shown.has(job.id));
     if (!jobs.length) {
-      box.textContent = "No new jobs yet.";
+      box.textContent = shown.size ? "All queued jobs are already listed above." : "No queued jobs yet.";
       return;
     }
-    box.innerHTML = jobs
-      .slice(0, 20)
-      .map((j) => {
-        const title = esc(j.title || j.external_job_id || "Untitled");
-        const meta = [j.status, j.platform, j.client, j.budget].filter(Boolean).map(esc).join(" · ");
-        return `<div class="job"><div>${title}</div><div class="meta">${meta}</div></div>`;
-      })
-      .join("");
+    box.innerHTML = jobs.map((job) => JobBiderCard.jobCardHtml(job)).join("");
   } catch (err) {
     document.getElementById("jobs").textContent = String(err && err.message ? err.message : err);
   }
@@ -119,6 +75,7 @@ function onSlotClick(event) {
 
 document.getElementById("slots").addEventListener("click", onSlotClick);
 document.getElementById("parked").addEventListener("click", onSlotClick);
+document.getElementById("jobs").addEventListener("click", onSlotClick);
 document.getElementById("open").onclick = () => runQueueAction("NEXT");
 document.getElementById("skip").onclick = () => runQueueAction("SKIP");
 document.getElementById("next").onclick = () => runQueueAction("NEXT");

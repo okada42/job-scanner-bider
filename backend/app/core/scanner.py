@@ -75,6 +75,14 @@ def diagnose_listing_html(html: str) -> str:
 
 
 def bider_payload(job: dict) -> dict:
+    extra = job.get("extra") if isinstance(job.get("extra"), dict) else {}
+    posted = (
+        job.get("posted_at")
+        or extra.get("posted_at")
+        or extra.get("postedLabel")
+        or extra.get("postedAt")
+        or job.get("detected_at")
+    )
     return {
         "id": job["id"],
         "platform": job["platform"],
@@ -83,6 +91,8 @@ def bider_payload(job: dict) -> dict:
         "budget": job.get("budget"),
         "client": job.get("client"),
         "deadline": job.get("deadline"),
+        "posted_at": posted,
+        "detected_at": job.get("detected_at"),
         "status": job.get("status"),
     }
 
@@ -169,6 +179,7 @@ async def ingest_jobs(
         if find_job(platform, str(external_id), url):
             skipped_seen += 1
             continue
+        listing_extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
         row = {
             "platform": platform,
             "external_job_id": str(external_id),
@@ -182,6 +193,10 @@ async def ingest_jobs(
             "detected_at": datetime.now(timezone.utc).isoformat(),
             "status": "RECORDED",
             "matched": False,
+            "posted_at": listing_extra.get("posted_at")
+            or listing_extra.get("postedLabel")
+            or listing_extra.get("postedAt")
+            or item.get("posted_at"),
         }
         if sid:
             row["source_id"] = str(sid)
@@ -338,11 +353,11 @@ async def scan_source(source: dict) -> dict:
     return result
 
 
-def claim_next_job() -> dict | None:
+def claim_next_job(*, force: bool = False) -> dict | None:
     from app.store import active_job_count, update_job
 
     settings = get_bider_settings()
-    if not settings.get("enabled") or settings.get("mode") == "paused":
+    if not force and (not settings.get("enabled") or settings.get("mode") == "paused"):
         return None
     if active_job_count() >= int(settings.get("max_active_jobs") or 1):
         return None
@@ -352,3 +367,30 @@ def claim_next_job() -> dict | None:
     job = update_job(pending[0]["id"], {"status": "SENT_TO_BIDER"})
     add_event(job["id"], "SENT_TO_BIDER")
     return job
+
+
+def collect_next_jobs(n: int, *, force: bool = False) -> list[dict]:
+    """Hand the extension up to n jobs: in-flight first, then newly claimed queued jobs."""
+    from app.store import active_jobs
+
+    limit = min(10, max(1, int(n or 1)))
+    seen: set[str] = set()
+    jobs: list[dict] = []
+    for job in active_jobs(limit):
+        jid = str(job.get("id") or "")
+        if not jid or jid in seen:
+            continue
+        seen.add(jid)
+        jobs.append(bider_payload(job))
+        if len(jobs) >= limit:
+            return jobs
+    while len(jobs) < limit:
+        job = claim_next_job(force=force)
+        if not job:
+            break
+        jid = str(job.get("id") or "")
+        if not jid or jid in seen:
+            break
+        seen.add(jid)
+        jobs.append(bider_payload(job))
+    return jobs

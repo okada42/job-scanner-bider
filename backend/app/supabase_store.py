@@ -366,8 +366,30 @@ def find_job(platform: str, external_job_id: str | None, url: str) -> dict | Non
         return None
 
 
+_JOB_INSERT_KEYS = {
+    "id",
+    "platform",
+    "external_job_id",
+    "url",
+    "title",
+    "client",
+    "budget",
+    "deadline",
+    "application_count",
+    "category",
+    "detected_at",
+    "status",
+    "priority",
+    "matched",
+    "source_id",
+    "created_at",
+    "updated_at",
+}
+
+
 def insert_job(row: dict) -> dict:
-    res = supabase().table("jobs").insert(row).execute()
+    payload = {k: v for k, v in row.items() if k in _JOB_INSERT_KEYS and v is not None}
+    res = supabase().table("jobs").insert(payload).execute()
     return res.data[0]
 
 

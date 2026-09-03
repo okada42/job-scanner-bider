@@ -234,8 +234,10 @@ function previewFromJob(job, extra = {}) {
 async function fetchJobPreview(job) {
   const base = previewFromJob(job);
   if (!job?.url || !/crowdworks\.jp/i.test(job.url)) return base;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const res = await fetch(job.url, { credentials: "include", redirect: "follow" });
+    const res = await fetch(job.url, { credentials: "include", redirect: "follow", signal: ctrl.signal });
     if (!res.ok) return { ...base, fetchError: true };
     const html = await res.text();
     const parsed = typeof self.parseCrowdWorksDetail === "function" ? self.parseCrowdWorksDetail(html) : null;
@@ -243,34 +245,157 @@ async function fetchJobPreview(job) {
     return previewFromJob(job, parsed);
   } catch (_) {
     return { ...base, fetchError: true };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-async function claimJobs(need) {
-  if (need <= 0) return [];
+const IN_FLIGHT = new Set(["SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER"]);
+const QUEUEABLE = new Set(["QUEUED", "NEW", "SENT_TO_BIDER"]);
+const LISTABLE = new Set([
+  "QUEUED",
+  "NEW",
+  "SENT_TO_BIDER",
+  "PROCESSING",
+  "PROPOSAL_PAGE_READY",
+  "WAITING_FOR_USER",
+  "SKIPPED",
+]);
+
+function jobStatus(job) {
+  return String(job?.status || "").toUpperCase();
+}
+
+function addJobs(target, rows, seen) {
+  for (const job of rows || []) {
+    if (!job?.id || seen.has(job.id)) continue;
+    seen.add(job.id);
+    target.push(job);
+  }
+}
+
+async function listBiderJobs() {
+  const jobs = [];
+  const seen = new Set();
+  const [pending, listed, skipped, snap] = await Promise.all([
+    api("/api/jobs/pending").catch(() => []),
+    api("/api/jobs?limit=40&new_only=true").catch(() => ({})),
+    api("/api/jobs?status=SKIPPED&limit=20&new_only=true").catch(() => ({})),
+    api("/api/jobs/bider").catch(() => ({})),
+  ]);
+  addJobs(jobs, Array.isArray(pending) ? pending : [], seen);
+  addJobs(jobs, jobsFromApi(listed), seen);
+  addJobs(jobs, jobsFromApi(skipped), seen);
+  addJobs(jobs, snap?.active, seen);
+  addJobs(jobs, snap?.queued, seen);
+  if (snap?.current) addJobs(jobs, [snap.current], seen);
+  return jobs.filter((job) => LISTABLE.has(jobStatus(job)) || !job.status);
+}
+
+async function markProcessing(job) {
   try {
-    const data = await api(`/api/jobs/next-batch?count=${need}`);
-    if (Array.isArray(data?.jobs)) return data.jobs;
+    await api(`/api/jobs/${encodeURIComponent(job.id)}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status: "PROCESSING" }),
+    });
+  } catch (_) {
+    /* already claimed or offline */
+  }
+  return { ...job, status: "PROCESSING" };
+}
+
+async function claimJobs(need, excludeIds) {
+  if (need <= 0) return [];
+  const skip = excludeIds || new Set();
+  let claimed = [];
+  try {
+    const data = await api(`/api/jobs/next-batch?count=${need}&limit=${need}&force=true`);
+    if (Array.isArray(data?.jobs)) claimed = data.jobs;
   } catch (_) {
     /* older API */
   }
-  const out = [];
-  for (let i = 0; i < need; i += 1) {
-    const data = await api("/api/jobs/next");
-    if (!data.job) break;
-    out.push(data.job);
+  if (!claimed.length) {
+    try {
+      const data = await api(`/api/jobs/next-batch?count=${need}`);
+      if (Array.isArray(data?.jobs)) claimed = data.jobs;
+    } catch (_) {
+      /* older API */
+    }
   }
-  return out;
+  if (!claimed.length) {
+    for (let i = 0; i < need; i += 1) {
+      try {
+        const data = await api("/api/jobs/next");
+        if (!data.job) break;
+        claimed.push(data.job);
+      } catch (_) {
+        break;
+      }
+    }
+  }
+  claimed = claimed.filter((job) => job?.id && !skip.has(job.id));
+  if (claimed.length >= need) return claimed.slice(0, need);
+
+  const listed = await listBiderJobs();
+  const inflight = listed.filter((job) => IN_FLIGHT.has(jobStatus(job)) && !skip.has(job.id));
+  const queued = listed.filter((job) => QUEUEABLE.has(jobStatus(job)) && !skip.has(job.id) && !IN_FLIGHT.has(jobStatus(job)));
+  const extras = [];
+  for (const job of [...inflight, ...queued]) {
+    if (claimed.length + extras.length >= need) break;
+    if (claimed.some((row) => row.id === job.id) || extras.some((row) => row.id === job.id)) continue;
+    extras.push(IN_FLIGHT.has(jobStatus(job)) ? job : await markProcessing(job));
+  }
+  return [...claimed, ...extras].slice(0, need);
+}
+
+async function tabStillOpen(tabId) {
+  if (!tabId) return false;
+  try {
+    await chrome.tabs.get(tabId);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function reviveSlots(slots) {
+  const next = [];
+  for (const slot of slots) {
+    if (await tabStillOpen(slot.tabId)) {
+      next.push(slot);
+      continue;
+    }
+    const extract = slot.extract || (await fetchJobPreview(slot));
+    const tabId = await openPreparedTab(slot, extract, next.length === 0);
+    const updated = { ...slot, tabId, opened: true, extract };
+    next.push(updated);
+    await setDraft(slot.id, extract);
+  }
+  await setSlots(next);
+  return next;
 }
 
 async function openPreparedTab(job, extract, focus) {
   const tab = await chrome.tabs.create({ url: job.url, active: Boolean(focus) });
-  await api(`/api/jobs/${job.id}/status`, {
-    method: "POST",
-    body: JSON.stringify({ status: "PROCESSING" }),
-  });
+  await markProcessing(job);
   if (tab?.id) await runApplyFlow(tab.id, extract, job.id);
   return tab?.id || null;
+}
+
+function slotFromJob(job, extract, tabId) {
+  return {
+    id: job.id,
+    url: job.url,
+    title: job.title,
+    client: extract.client || job.client,
+    budget: job.budget,
+    deadline: job.deadline,
+    posted_at: extract.postedLabel || job.posted_at || job.detected_at,
+    tabId,
+    opened: true,
+    extract,
+    status: job.status || "PROCESSING",
+  };
 }
 
 async function fillWindow() {
@@ -288,31 +413,30 @@ async function fillWindow() {
   filling = true;
   try {
     const maxActive = await readMaxActive();
-    let slots = await getSlots();
+    let slots = await reviveSlots(await getSlots());
     const have = new Set(slots.map((s) => s.id));
     const need = maxActive - slots.length;
     if (need > 0) {
-      const jobs = await claimJobs(need);
+      const jobs = await claimJobs(need, have);
       for (let i = 0; i < jobs.length; i += 1) {
         const job = jobs[i];
-        if (!job?.id || have.has(job.id)) continue;
+        if (!job?.id || have.has(job.id) || !job.url) continue;
         const extract = await fetchJobPreview(job);
         const tabId = await openPreparedTab(job, extract, slots.length === 0);
-        const slot = {
-          id: job.id,
-          url: job.url,
-          title: job.title,
-          client: extract.client || job.client,
-          budget: job.budget,
-          tabId,
-          opened: true,
-          extract,
-        };
+        const slot = slotFromJob(job, extract, tabId);
         slots = [...slots, slot];
         have.add(job.id);
         await setDraft(job.id, extract);
         await setSlots(slots);
       }
+    }
+    if (!slots.length) {
+      return {
+        ok: false,
+        error: "No queued URLs to open. Check the queue and Max active on the dashboard.",
+        slots,
+        maxActive,
+      };
     }
     return { ok: true, slots, maxActive };
   } finally {
@@ -328,8 +452,11 @@ async function openSlot(jobId) {
   const slots = await getSlots();
   const parked = await getParked();
   const fromParked = parked.find((s) => s.id === jobId);
-  const slot = (jobId && slots.find((s) => s.id === jobId)) || fromParked || slots[0];
-  if (!slot) return fillWindow();
+  const slot = (jobId && slots.find((s) => s.id === jobId)) || fromParked || (!jobId && slots[0]) || null;
+  if (!slot) {
+    if (!jobId) return fillWindow();
+    return openQueuedJob(jobId);
+  }
   const extract = slot.extract || (await fetchJobPreview(slot));
   await setDraft(slot.id, extract);
   if (slot.tabId) {
@@ -351,6 +478,22 @@ async function openSlot(jobId) {
     await setSlots(slots.map((s) => (s.id === slot.id ? updated : s)));
   }
   return { ok: true, job: updated };
+}
+
+async function openQueuedJob(jobId) {
+  const listed = await listBiderJobs();
+  const job = listed.find((row) => row.id === jobId);
+  if (!job?.url) return { ok: false, error: "That job is not in the queue." };
+  const extract = await fetchJobPreview(job);
+  const tabId = await openPreparedTab(job, extract, true);
+  const slot = slotFromJob(job, extract, tabId);
+  const slots = await getSlots();
+  const parked = await getParked();
+  await setParked(parked.filter((s) => s.id !== job.id));
+  const have = slots.some((s) => s.id === job.id);
+  await setSlots(have ? slots.map((s) => (s.id === job.id ? slot : s)) : [...slots, slot]);
+  await setDraft(job.id, extract);
+  return { ok: true, job: slot };
 }
 
 async function finishSlot(jobId, status, opts = {}) {
@@ -693,8 +836,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: true });
     } else if (msg.type === "LIST_JOBS") {
       try {
-        const data = await api("/api/jobs?limit=25&new_only=true");
-        sendResponse({ ok: true, jobs: jobsFromApi(data), backendUrl: (await cfg()).backendUrl });
+        const jobs = await listBiderJobs();
+        const drafts = await getDrafts();
+        const slots = await getSlots();
+        const parked = await getParked();
+        const extras = new Map();
+        for (const slot of [...slots, ...parked]) extras.set(slot.id, slot.extract || null);
+        sendResponse({
+          ok: true,
+          jobs: jobs.map((job) => ({
+            ...job,
+            extract: drafts[job.id] || extras.get(job.id) || job.extract || null,
+          })),
+          backendUrl: (await cfg()).backendUrl,
+        });
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err), jobs: [] });
       }

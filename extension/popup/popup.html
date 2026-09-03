@@ -9,11 +9,23 @@
       .hint { color: #555; font-size: 11px; margin: 8px 0 12px; }
       .scan { color: #333; font-size: 11px; min-height: 1.4em; }
       h2 { font-size: 11px; letter-spacing: 0.06em; color: #666; margin: 12px 0 6px; }
-      #jobs { max-height: 220px; overflow: auto; border-top: 1px solid #ddd; }
+      #jobs { max-height: 280px; overflow: auto; border-top: 1px solid #ddd; }
       .job { padding: 8px 0; border-bottom: 1px solid #eee; }
       .job a { color: #b45309; text-decoration: none; font-weight: 600; }
       .meta { color: #666; font-size: 11px; }
       .empty { color: #888; font-size: 12px; padding: 8px 0; }
+      .slot {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin: 8px 0;
+        background: #fafafa;
+      }
+      .slot .url { color: #b45309; word-break: break-all; font-size: 11px; }
+      .slot .price { color: #92400e; font-weight: 600; }
+      .slot .mark { font-weight: 600; margin: 2px 0; }
+      .slot.parked { opacity: 0.92; border-style: dashed; }
+      .slot button { width: auto; margin: 6px 6px 0 0; padding: 6px 8px; }
     </style>
   </head>
   <body>
@@ -41,6 +53,7 @@
     <h2>FROM DATABASE</h2>
     <div id="jobs" class="empty">Loading…</div>
     <script src="../shared/verify.js"></script>
+    <script src="../shared/job-card.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

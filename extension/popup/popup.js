@@ -1,36 +1,9 @@
-function esc(value) {
-  return String(value || "").replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[ch]));
-}
-
-function safeUrl(url) {
-  const raw = String(url || "");
-  if (raw.startsWith("https://") || raw.startsWith("http://")) return raw;
-  return "";
-}
-
 function slotLine(slot, parked) {
-  const extract = slot.extract || {};
-  const marks = JobBiderVerify.clientMarks(extract);
-  const action = parked
-    ? `<button type="button" data-reopen="${esc(slot.id)}">Reopen</button>`
-    : `<button type="button" data-open="${esc(slot.id)}">Open</button>`;
-  return `<div class="job"><div class="meta">${esc(slot.url || "")}</div><div>${esc(
-    extract.client || slot.client || "—"
-  )} · ${esc(slot.budget || "—")}</div><div class="meta">${esc(marks.identity)} · ${esc(marks.rule)}${
-    parked ? " · skipped/closed" : ""
-  }</div>${action}</div>`;
+  return JobBiderCard.jobCardHtml(slot, { parked: Boolean(parked) });
 }
 
 function jobLine(job) {
-  const title = esc(job.title || job.external_job_id || "Untitled");
-  const bits = [job.status, job.platform, job.client, job.budget].filter(Boolean).map(esc);
-  return `<div class="job"><div>${title}</div><div class="meta">${bits.join(" · ")}</div></div>`;
+  return JobBiderCard.jobCardHtml(job);
 }
 
 async function refresh() {
@@ -79,10 +52,11 @@ async function refresh() {
     box.textContent = listed?.error || "Set Backend URL and token in Options, then Save.";
     return;
   }
-  const jobs = listed.jobs || [];
+  const shown = new Set([...slots, ...parked].map((slot) => slot.id));
+  const jobs = (listed.jobs || []).filter((job) => job?.id && !shown.has(job.id));
   if (!jobs.length) {
     box.className = "empty";
-    box.textContent = "No new jobs yet.";
+    box.textContent = shown.size ? "Queued jobs are listed above." : "No queued jobs yet.";
     return;
   }
   box.className = "";
@@ -103,17 +77,21 @@ document.getElementById("skip").onclick = async () => {
   if (res?.error) document.getElementById("status").textContent = res.error;
   await refresh();
 };
-document.getElementById("slotList").addEventListener("click", async (event) => {
+
+async function onJobClick(event) {
   const open = event.target.getAttribute("data-open");
   const reopen = event.target.getAttribute("data-reopen");
-  if (!open && !reopen) return;
+  const skip = event.target.getAttribute("data-skip");
+  if (!open && !reopen && !skip) return;
   const res = await chrome.runtime.sendMessage({
-    type: open ? "OPEN_JOB" : "REOPEN_JOB",
-    jobId: open || reopen,
+    type: skip ? "SKIP" : open ? "OPEN_JOB" : "REOPEN_JOB",
+    jobId: open || reopen || skip,
   });
   if (res?.error) document.getElementById("status").textContent = res.error;
   await refresh();
-});
+}
+document.getElementById("slotList").addEventListener("click", onJobClick);
+document.getElementById("jobs").addEventListener("click", onJobClick);
 document.getElementById("open").onclick = async () => {
   const res = await chrome.runtime.sendMessage({ type: "OPEN_JOB" });
   if (res?.error) document.getElementById("status").textContent = res.error;

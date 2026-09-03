@@ -101,7 +101,7 @@ The search profile **must stay logged in**. Railway’s HTML GET is anonymous; i
 
 The popup and side panel **FROM DATABASE** list is `GET /api/jobs` — the same table the dashboard uses. Scan still POSTs new listings into that table; it does not keep a second copy.
 
-**CrowdWorks apply (never submits):** Set **Max active** on the dashboard (for example `3`). On the Apply profile, Fill window / NEXT claims that many queued jobs and opens a tab for each. The side panel lists every open URL with client, ✓/✗ 本人確認 and 発注ルール, and price. Each tab clicks **応募画面へ**, sets **完了予定日** to 掲載日 + 1 month, and pastes title + 仕事の詳細 from extension storage (not the system clipboard). It never fills 契約金額 / price and never clicks 応募する. When you click 応募する yourself, that job is marked done and the next queued URL opens so the window stays full.
+**CrowdWorks apply (never submits):** Set **Max active** on the dashboard (for example `3`). On the Apply profile, **Fill window** opens that many queued URLs (and recovers in-progress jobs after a reload). Each JOB BIDER card shows only URL, client (including 本人確認 / 発注ルール), budget, published date, and deadline, plus **Open** or **Reopen** for skipped/closed jobs. Each tab clicks **応募画面へ**, sets **完了予定日** to 掲載日 + 1 month, and pastes title + 仕事の詳細 from extension storage (not the system clipboard). It never fills 契約金額 / price and never clicks 応募する. When you click 応募する yourself, that job is marked done and the next queued URL opens so the window stays full. Reload unpacked extension **0.3.8** after `git pull`.
 
 `host_permissions` already include `https://*.up.railway.app/*`. For a custom domain, add that origin to `extension/manifest.json` and reload.
 

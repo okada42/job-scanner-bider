@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import require_token
-from app.core.scanner import bider_payload, claim_next_job, ingest_jobs
+from app.core.scanner import bider_payload, claim_next_job, collect_next_jobs, ingest_jobs
 from app.db import JOB_STATUSES
 from app.integrations.hub import hub
 from app.schemas import JobIngestRequest, JobStatusUpdate
@@ -33,7 +33,7 @@ def bider_snapshot():
     return {
         "current": current_rows[0] if current_rows else None,
         "active": current_rows,
-        "queued": queued_jobs(8),
+        "queued": queued_jobs(50),
     }
 
 
@@ -46,14 +46,13 @@ def next_job():
 
 
 @router.get("/next-batch")
-def next_batch(count: int = Query(default=1, ge=1, le=10)):
-    jobs = []
-    for _ in range(count):
-        job = claim_next_job()
-        if not job:
-            break
-        jobs.append(bider_payload(job))
-    return {"jobs": jobs}
+def next_batch(
+    count: int = Query(default=1, ge=1, le=10),
+    limit: int | None = Query(default=None, ge=1, le=10),
+    force: bool = Query(default=False),
+):
+    n = int(limit or count)
+    return {"jobs": collect_next_jobs(n, force=force)}
 
 
 @router.post("/ingest")
