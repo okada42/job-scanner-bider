@@ -10,7 +10,10 @@
       .meta { color: #9aa6b8; margin: 6px 0; }
       .warn { color: #f0c987; }
       .value { color: #eef2f8; }
+      .mark { font-size: 14px; font-weight: 600; color: #eef2f8; margin: 6px 0; }
+      .url { color: #e8b86d; word-break: break-all; font-size: 12px; }
       button { margin-right: 6px; margin-top: 12px; padding: 8px 10px; }
+      button.primary { background: #e8b86d; border: 0; color: #12161e; font-weight: 700; }
       pre { white-space: pre-wrap; font-size: 12px; color: #c9d3e2; }
       h3 { margin: 16px 0 6px; font-size: 11px; letter-spacing: 0.08em; color: #e8b86d; }
       .job { padding: 8px 0; border-bottom: 1px solid #2a3344; }
@@ -28,9 +31,13 @@
     <div class="body">
       <h3>CLIENT</h3>
       <div class="meta" id="clientName">👤 —</div>
-      <div class="meta" id="clientVerify">Verification —</div>
+      <div class="mark" id="clientIdentity">— 本人確認</div>
+      <div class="mark" id="clientRule">— 発注ルール</div>
       <div class="meta" id="clientRecord">募集実績 —</div>
       <div class="meta" id="clientRate">完了率 —</div>
+      <h3>URL</h3>
+      <div class="url" id="jobUrl">—</div>
+      <button id="open" class="primary">Open job</button>
       <button id="prepare">Prepare page</button>
       <button id="skip">SKIP</button>
       <button id="next">NEXT</button>
@@ -40,6 +47,7 @@
       <h3>FROM DATABASE</h3>
       <div id="jobs" class="meta">Loading…</div>
     </div>
+    <script src="../shared/verify.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

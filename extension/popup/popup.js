@@ -17,9 +17,7 @@ function safeUrl(url) {
 function jobLine(job) {
   const title = esc(job.title || job.external_job_id || "Untitled");
   const bits = [job.status, job.platform, job.client, job.budget].filter(Boolean).map(esc);
-  const href = safeUrl(job.url);
-  const open = href ? `<a href="${esc(href)}" target="_blank" rel="noreferrer">Open</a>` : "";
-  return `<div class="job"><div>${title}</div><div class="meta">${bits.join(" · ")}</div>${open}</div>`;
+  return `<div class="job"><div>${title}</div><div class="meta">${bits.join(" · ")}</div></div>`;
 }
 
 async function refresh() {
@@ -34,6 +32,11 @@ async function refresh() {
   document.getElementById("applyEnabled").checked = Boolean(state.applyEnabled);
   const el = document.getElementById("status");
   const job = state.currentJob;
+  const extract = state.pageExtract || state.applyDraft;
+  const marks = JobBiderVerify.clientMarks(extract);
+  document.getElementById("previewMarks").textContent = job
+    ? `${extract?.client || job.client || "—"}  ${marks.identity}  ${marks.rule}`
+    : "";
   if (!state.hasToken) {
     el.textContent = "API token is missing. Open Options.";
   } else {
@@ -42,7 +45,9 @@ async function refresh() {
       : state.paused
         ? "Paused"
         : job
-          ? job.title || job.url
+          ? job.opened
+            ? job.client || job.title || job.url
+            : `Review ${job.client || "client"} — then Open`
           : "Idle / waiting";
   }
   const scanEl = document.getElementById("scanStatus");
@@ -84,6 +89,11 @@ document.getElementById("prepare").onclick = () => chrome.runtime.sendMessage({ 
 document.getElementById("options").onclick = () => chrome.runtime.openOptionsPage();
 document.getElementById("skip").onclick = async () => {
   const res = await chrome.runtime.sendMessage({ type: "SKIP" });
+  if (res?.error) document.getElementById("status").textContent = res.error;
+  await refresh();
+};
+document.getElementById("open").onclick = async () => {
+  const res = await chrome.runtime.sendMessage({ type: "OPEN_JOB" });
   if (res?.error) document.getElementById("status").textContent = res.error;
   await refresh();
 };

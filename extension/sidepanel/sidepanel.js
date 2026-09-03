@@ -23,24 +23,32 @@ function showActionError(text) {
 function paintClient(extract, job) {
   const name = extract?.client || job?.client || "—";
   document.getElementById("clientName").textContent = `👤 ${name}`;
-  document.getElementById("clientVerify").textContent = `Verification ${extract?.verification || "—"}`;
+  const marks = JobBiderVerify.clientMarks(extract);
+  document.getElementById("clientIdentity").textContent = marks.identity;
+  document.getElementById("clientRule").textContent = marks.rule;
   document.getElementById("clientRecord").textContent = `募集実績 ${extract?.achievement || "—"}`;
   document.getElementById("clientRate").textContent = `完了率 ${extract?.completionRate || "—"}`;
+  const href = safeUrl(extract?.url || job?.url);
+  document.getElementById("jobUrl").textContent = href || "—";
   const desc = extract?.details || extract?.description || "";
-  if (desc) document.getElementById("desc").textContent = desc.slice(0, 4000);
+  if (extract?.loading) document.getElementById("desc").textContent = "Reading client from the listing…";
+  else if (desc) document.getElementById("desc").textContent = desc.slice(0, 4000);
 }
 
 async function paint() {
   try {
     const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
     const job = state.currentJob;
-    const extract = state.pageExtract;
+    const extract = state.pageExtract || state.applyDraft;
     document.getElementById("statusLine").textContent = job
-      ? extract?.client || job.client || "Active job"
+      ? job.opened
+        ? extract?.client || job.client || "Active job"
+        : "Review client, then Open"
       : state.paused
         ? "Paused"
         : "No active job";
     paintClient(extract, job);
+    document.getElementById("open").disabled = !job || Boolean(job.opened);
 
     const status = document.getElementById("biderStatus");
     if (!state.hasToken) {
@@ -52,6 +60,13 @@ async function paint() {
     } else if (state.paused) {
       status.className = "meta warn";
       status.textContent = "Bider is paused.";
+    } else if (job && !job.opened) {
+      status.className = "meta";
+      status.textContent = extract?.loading
+        ? "Loading client info…"
+        : extract?.fetchError
+          ? "Could not read the listing yet. You can still Open."
+          : "Client loaded. Open the URL when you are ready.";
     } else {
       status.className = "meta";
       status.textContent = job ? "Active job open in a tab." : "Waiting for a queued job.";
@@ -72,10 +87,8 @@ async function paint() {
       .slice(0, 20)
       .map((j) => {
         const title = esc(j.title || j.external_job_id || "Untitled");
-        const href = safeUrl(j.url);
-        const open = href ? ` <a href="${esc(href)}" target="_blank" rel="noreferrer">Open</a>` : "";
         const meta = [j.status, j.platform, j.client].filter(Boolean).map(esc).join(" · ");
-        return `<div class="job"><div>${title}</div><div class="meta">${meta}</div>${open}</div>`;
+        return `<div class="job"><div>${title}</div><div class="meta">${meta}</div></div>`;
       })
       .join("");
   } catch (err) {
@@ -92,6 +105,7 @@ async function runQueueAction(type) {
   await paint();
 }
 
+document.getElementById("open").onclick = () => runQueueAction("OPEN_JOB");
 document.getElementById("skip").onclick = () => runQueueAction("SKIP");
 document.getElementById("next").onclick = () => runQueueAction("NEXT");
 document.getElementById("options").onclick = () => chrome.runtime.openOptionsPage();

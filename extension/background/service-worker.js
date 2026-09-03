@@ -45,7 +45,8 @@ async function connect() {
     if (msg.event === "NEW_JOB") {
       const settings = await cfg();
       if (!settings.applyEnabled || settings.paused) return;
-      await maybeOpen(msg.job);
+      if (settings.currentJob) return;
+      await previewJob(msg.job);
     }
   };
   ws.onclose = () => {
@@ -142,19 +143,74 @@ async function migrateLocalhostIfUnreachable() {
   }
 }
 
-async function maybeOpen(job) {
+function previewFromJob(job, extra = {}) {
+  return {
+    client: extra.client || job.client || "—",
+    url: job.url,
+    title: extra.title || job.title || "",
+    details: extra.details || extra.description || "",
+    description: extra.details || extra.description || "",
+    identity: extra.identity ?? null,
+    ruleCheck: extra.ruleCheck ?? null,
+    achievement: extra.achievement || "—",
+    completionRate: extra.completionRate || "—",
+    postedLabel: extra.postedLabel || "",
+    postedAt: extra.postedAt || null,
+    dueAt: extra.dueAt || null,
+    loading: Boolean(extra.loading),
+    fetchError: Boolean(extra.fetchError),
+    at: extra.at || new Date().toISOString(),
+  };
+}
+
+async function fetchJobPreview(job) {
+  const base = previewFromJob(job);
+  if (!job?.url || !/crowdworks\.jp/i.test(job.url)) return base;
+  try {
+    const res = await fetch(job.url, { credentials: "include", redirect: "follow" });
+    if (!res.ok) return { ...base, fetchError: true };
+    const html = await res.text();
+    const parsed = typeof self.parseCrowdWorksDetail === "function" ? self.parseCrowdWorksDetail(html) : null;
+    if (!parsed) return { ...base, fetchError: true };
+    return previewFromJob(job, parsed);
+  } catch (_) {
+    return { ...base, fetchError: true };
+  }
+}
+
+async function previewJob(job) {
   const c = await cfg();
-  if (!job) return;
-  if (!c.applyEnabled || c.paused) return;
-  if (c.currentJob && c.currentJob.id !== job.id) return;
-  await chrome.storage.sync.set({ currentJob: job });
-  await chrome.storage.local.set({ pageExtract: null });
-  const tab = await chrome.tabs.create({ url: job.url, active: true });
-  await api(`/api/jobs/${job.id}/status`, {
+  if (!job) return { ok: false, error: "No job to preview." };
+  if (!c.applyEnabled || c.paused) return { ok: false, error: "Enable apply (Bider) first." };
+  if (c.currentJob && c.currentJob.id !== job.id) {
+    return { ok: true, job: c.currentJob };
+  }
+  const stub = previewFromJob(job, { loading: true });
+  await chrome.storage.sync.set({ currentJob: { ...job, opened: false } });
+  await chrome.storage.local.set({ pageExtract: stub, applyDraft: null });
+  const extract = await fetchJobPreview(job);
+  await chrome.storage.local.set({ pageExtract: extract, applyDraft: extract });
+  return { ok: true, job, extract };
+}
+
+async function openCurrentJob() {
+  const c = await cfg();
+  if (!c.applyEnabled || c.paused) {
+    return { ok: false, error: "Enable apply (Bider) first." };
+  }
+  if (!c.currentJob?.url) {
+    return { ok: false, error: "No previewed job. Press NEXT first." };
+  }
+  const local = await chrome.storage.local.get({ applyDraft: null, pageExtract: null });
+  const draft = local.applyDraft || local.pageExtract;
+  await chrome.storage.sync.set({ currentJob: { ...c.currentJob, opened: true } });
+  const tab = await chrome.tabs.create({ url: c.currentJob.url, active: true });
+  await api(`/api/jobs/${c.currentJob.id}/status`, {
     method: "POST",
     body: JSON.stringify({ status: "PROCESSING" }),
   });
-  if (tab?.id) await runApplyFlow(tab.id);
+  if (tab?.id) await runApplyFlow(tab.id, draft);
+  return { ok: true, job: c.currentJob };
 }
 
 function sleep(ms) {
@@ -202,24 +258,28 @@ async function rememberExtract(extract) {
   await chrome.storage.local.set({ pageExtract: extract });
 }
 
-async function runApplyFlow(tabId) {
+async function runApplyFlow(tabId, draft) {
   await waitTabComplete(tabId);
-  let extract = null;
-  let first = await sendToTab(tabId, { type: "AUTO_APPLY" });
+  let extract = draft || null;
+  let first = await sendToTab(tabId, { type: "AUTO_APPLY", extract });
   if (first?.extract) {
     extract = first.extract;
     await rememberExtract(extract);
+    await chrome.storage.local.set({ applyDraft: extract });
   }
   if (first?.stage === "clicked_apply") {
     await waitTabComplete(tabId);
     const second = await sendToTab(tabId, { type: "AUTO_APPLY", extract });
-    if (second?.extract) await rememberExtract(second.extract);
+    if (second?.extract) {
+      await rememberExtract(second.extract);
+      await chrome.storage.local.set({ applyDraft: second.extract });
+    }
     return second;
   }
   return first;
 }
 
-async function claimAndOpen() {
+async function claimAndPreview() {
   const c = await cfg();
   if (!c.applyEnabled) {
     return { ok: false, error: "Enable apply (Bider) in the popup first." };
@@ -236,8 +296,7 @@ async function claimAndOpen() {
         "No queued job. On the dashboard, turn Bider ON (not paused) and wait for a new match to enter the queue.",
     };
   }
-  await maybeOpen(data.job);
-  return { ok: true, job: data.job };
+  return previewJob(data.job);
 }
 
 async function setApplyEnabled(enabled) {
@@ -246,7 +305,7 @@ async function setApplyEnabled(enabled) {
   await chrome.storage.sync.set(patch);
   if (enabled) {
     await connect();
-    return claimAndOpen();
+    return claimAndPreview();
   }
   disconnectWs();
   return { ok: true };
@@ -415,6 +474,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     } else if (msg.type === "RESUME") {
       await chrome.storage.sync.set({ paused: false, running: true, applyEnabled: true });
       await connect();
+      const now = await cfg();
+      if (!now.currentJob) await claimAndPreview();
       sendResponse({ ok: true });
     } else if (msg.type === "SKIP" || msg.type === "NEXT") {
       try {
@@ -426,9 +487,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           });
         }
         await chrome.storage.sync.set({ currentJob: null });
-        await chrome.storage.local.set({ pageExtract: null });
-        const result = await claimAndOpen();
+        await chrome.storage.local.set({ pageExtract: null, applyDraft: null });
+        const result = await claimAndPreview();
         sendResponse({ ok: Boolean(result.ok), ...result });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
+    } else if (msg.type === "OPEN_JOB") {
+      try {
+        sendResponse(await openCurrentJob());
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
@@ -438,7 +505,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: false, error: "No active tab." });
         return;
       }
-      const stored = (await chrome.storage.local.get({ pageExtract: null })).pageExtract;
+      const stored =
+        (await chrome.storage.local.get({ applyDraft: null })).applyDraft ||
+        (await chrome.storage.local.get({ pageExtract: null })).pageExtract;
       const res = await sendToTab(tab.id, { type: "PREPARE", extract: stored });
       if (res?.extract) await rememberExtract(res.extract);
       sendResponse(res || { ok: false, error: "Prepare did not run on this page." });
@@ -457,12 +526,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse(await testConnection());
     } else if (msg.type === "GET_STATE") {
       const c = await cfg();
-      const local = await chrome.storage.local.get({ scanStatus: null, pageExtract: null });
+      const local = await chrome.storage.local.get({ scanStatus: null, pageExtract: null, applyDraft: null });
       sendResponse({
         ...c,
         hasToken: Boolean(c.token),
         scanStatus: local.scanStatus || null,
-        pageExtract: local.pageExtract || null,
+        pageExtract: local.pageExtract || local.applyDraft || null,
+        applyDraft: local.applyDraft || null,
       });
     }
   })();

@@ -115,9 +115,27 @@ function extractClient() {
     if (m) completionRate = `${m[1]}%`;
     else if (/完了率[^\n]*—/.test(block) || /プロジェクト完了率[^\n]*—/.test(block)) completionRate = "—";
   }
+  const identity =
+    info && typeof info.isIdentityVerified === "boolean"
+      ? info.isIdentityVerified
+      : /本人確認済み/.test(block)
+        ? true
+        : /本人確認未提出/.test(block)
+          ? false
+          : null;
+  const ruleCheck =
+    info && typeof info.isEmployerRuleCheckSucceeded === "boolean"
+      ? info.isEmployerRuleCheckSucceeded
+      : /発注ルールチェック済み/.test(block)
+        ? true
+        : /発注ルールチェック未回答/.test(block)
+          ? false
+          : null;
   return {
     name: name || "—",
     verification: verificationFromClient(info, block),
+    identity,
+    ruleCheck,
     achievement: achievement || "—",
     completionRate: completionRate || "—",
   };
@@ -135,6 +153,8 @@ function extractPage() {
     description: details,
     client: client.name,
     verification: client.verification,
+    identity: client.identity,
+    ruleCheck: client.ruleCheck,
     achievement: client.achievement,
     completionRate: client.completionRate,
     postedLabel,
@@ -150,22 +170,9 @@ function pasteBody(extract) {
   return [extract.title, extract.details || extract.description].filter(Boolean).join("\n\n");
 }
 
-async function copyText(text) {
-  if (!text) return false;
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch (_) {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.left = "-9999px";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    ta.remove();
-    return ok;
-  }
+function looksLikePrice(el) {
+  const blob = `${el?.name || ""} ${el?.id || ""} ${el?.placeholder || ""} ${el?.getAttribute?.("aria-label") || ""}`;
+  return /金額|報酬|単価|price|budget|reward/i.test(blob);
 }
 
 function pasteInto(el, text) {
@@ -266,7 +273,9 @@ async function fillTemplate(extract) {
   }
   const dialog = document.querySelector("[role='dialog'], .modal, [class*='Modal'], [class*='dialog']");
   const root = dialog && visible(dialog) ? dialog : document;
-  const inputs = [...root.querySelectorAll("input[type=text], input:not([type])")].filter(visible);
+  const inputs = [...root.querySelectorAll("input[type=text], input:not([type])")].filter(
+    (el) => visible(el) && !looksLikePrice(el)
+  );
   if (create && inputs[0] && title) pasteInto(inputs[0], title.slice(0, 80));
   const areas = [...root.querySelectorAll("textarea")].filter(visible);
   const area = areas.sort((a, b) => (b.offsetHeight || 0) - (a.offsetHeight || 0))[0] || findProposalBox();
@@ -290,14 +299,26 @@ async function fillApplication(extract) {
   };
 }
 
+function mergeExtract(incoming) {
+  const live = extractPage();
+  if (!incoming) return live;
+  return {
+    ...live,
+    ...incoming,
+    title: incoming.title || live.title,
+    details: incoming.details || incoming.description || live.details,
+    description: incoming.details || incoming.description || live.description,
+    postedAt: incoming.postedAt || live.postedAt,
+    dueAt: incoming.dueAt || live.dueAt,
+  };
+}
+
 async function prepare(msg) {
   const incoming = msg && msg.extract;
   if (isProposalPage()) {
-    const extract = incoming || extractPage();
-    return fillApplication(extract);
+    return fillApplication(mergeExtract(incoming));
   }
-  const extract = extractPage();
-  await copyText(pasteBody(extract));
+  const extract = mergeExtract(incoming);
   const apply = findApplyControl();
   if (apply) {
     apply.click();
