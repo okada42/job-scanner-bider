@@ -171,8 +171,15 @@ function pasteBody(extract) {
 }
 
 function looksLikePrice(el) {
-  const blob = `${el?.name || ""} ${el?.id || ""} ${el?.placeholder || ""} ${el?.getAttribute?.("aria-label") || ""}`;
-  return /金額|報酬|単価|price|budget|reward/i.test(blob);
+  const row = el?.closest?.("tr, li, label, .form-group, .field, section, div");
+  const blob = [
+    el?.name,
+    el?.id,
+    el?.placeholder,
+    el?.getAttribute?.("aria-label"),
+    (row?.innerText || "").slice(0, 120),
+  ].join(" ");
+  return /契約金額|希望金額|提示金額|報酬|単価|price|budget|reward|contract_amount|payment_amount/i.test(blob);
 }
 
 function pasteInto(el, text) {
@@ -269,17 +276,19 @@ async function fillTemplate(extract) {
   const create = visibleControls().find((el) => labelOf(el).includes("新しいテンプレートを作成"));
   if (create) {
     create.click();
-    await sleep(500);
+    await sleep(800);
   }
-  const dialog = document.querySelector("[role='dialog'], .modal, [class*='Modal'], [class*='dialog']");
-  const root = dialog && visible(dialog) ? dialog : document;
-  const inputs = [...root.querySelectorAll("input[type=text], input:not([type])")].filter(
-    (el) => visible(el) && !looksLikePrice(el)
+  const dialogs = [...document.querySelectorAll("[role='dialog'], .modal, [class*='Modal'], [class*='dialog']")].filter(
+    visible
   );
-  if (create && inputs[0] && title) pasteInto(inputs[0], title.slice(0, 80));
-  const areas = [...root.querySelectorAll("textarea")].filter(visible);
+  const root = dialogs[dialogs.length - 1] || document;
+  const inputs = [...root.querySelectorAll("input[type=text], input:not([type])")].filter(
+    (el) => visible(el) && !looksLikePrice(el) && el.type !== "number"
+  );
+  if (inputs[0] && title) pasteInto(inputs[0], title.slice(0, 80));
+  const areas = [...root.querySelectorAll("textarea")].filter((el) => visible(el) && !looksLikePrice(el));
   const area = areas.sort((a, b) => (b.offsetHeight || 0) - (a.offsetHeight || 0))[0] || findProposalBox();
-  if (!area) return { pasted: false };
+  if (!area || looksLikePrice(area)) return { pasted: false };
   pasteInto(area, body);
   return { pasted: true };
 }

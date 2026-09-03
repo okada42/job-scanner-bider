@@ -145,6 +145,7 @@ async function migrateLocalhostIfUnreachable() {
 let filling = false;
 let fillAgain = false;
 const finishing = new Set();
+const closingByUs = new Set();
 
 async function readMaxActive() {
   try {
@@ -164,6 +165,22 @@ async function getSlots() {
 async function setSlots(slots) {
   await chrome.storage.local.set({ activeSlots: slots });
   await chrome.storage.sync.set({ currentJob: slots[0] || null });
+}
+
+async function getParked() {
+  const local = await chrome.storage.local.get({ parkedSlots: [] });
+  return Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
+}
+
+async function setParked(slots) {
+  await chrome.storage.local.set({ parkedSlots: slots.slice(0, 40) });
+}
+
+async function parkSlot(slot, reason) {
+  if (!slot?.id) return;
+  const parked = await getParked();
+  const next = [{ ...slot, tabId: null, parkedReason: reason || "closed" }, ...parked.filter((s) => s.id !== slot.id)];
+  await setParked(next);
 }
 
 async function getDrafts() {
@@ -186,7 +203,11 @@ async function draftFor(jobId, tabId) {
   const drafts = await getDrafts();
   if (jobId && drafts[jobId]) return drafts[jobId];
   const slots = await getSlots();
-  const slot = (tabId && slots.find((s) => s.tabId === tabId)) || (jobId && slots.find((s) => s.id === jobId));
+  const parked = await getParked();
+  const slot =
+    (tabId && slots.find((s) => s.tabId === tabId)) ||
+    (jobId && slots.find((s) => s.id === jobId)) ||
+    (jobId && parked.find((s) => s.id === jobId));
   return slot?.extract || drafts[slot?.id] || null;
 }
 
@@ -303,29 +324,38 @@ async function fillWindow() {
   }
 }
 
-async function focusSlot(jobId) {
+async function openSlot(jobId) {
   const slots = await getSlots();
-  const slot = jobId ? slots.find((s) => s.id === jobId) : slots[0];
-  if (!slot) {
-    return fillWindow();
-  }
+  const parked = await getParked();
+  const fromParked = parked.find((s) => s.id === jobId);
+  const slot = (jobId && slots.find((s) => s.id === jobId)) || fromParked || slots[0];
+  if (!slot) return fillWindow();
+  const extract = slot.extract || (await fetchJobPreview(slot));
+  await setDraft(slot.id, extract);
   if (slot.tabId) {
     try {
       await chrome.tabs.update(slot.tabId, { active: true });
+      await runApplyFlow(slot.tabId, extract, slot.id);
       return { ok: true, job: slot };
     } catch (_) {
       /* tab gone */
     }
   }
-  const extract = slot.extract || (await fetchJobPreview(slot));
   const tabId = await openPreparedTab(slot, extract, true);
-  const next = slots.map((s) => (s.id === slot.id ? { ...s, tabId, opened: true, extract } : s));
-  await setDraft(slot.id, extract);
-  await setSlots(next);
-  return { ok: true, job: slot };
+  const updated = { ...slot, tabId, opened: true, extract };
+  if (fromParked) {
+    await setParked(parked.filter((s) => s.id !== slot.id));
+    const have = slots.some((s) => s.id === slot.id);
+    await setSlots(have ? slots.map((s) => (s.id === slot.id ? updated : s)) : [...slots, updated]);
+  } else {
+    await setSlots(slots.map((s) => (s.id === slot.id ? updated : s)));
+  }
+  return { ok: true, job: updated };
 }
 
-async function finishSlot(jobId, status) {
+async function finishSlot(jobId, status, opts = {}) {
+  const park = Boolean(opts.park);
+  const closeTab = opts.closeTab !== false;
   if (!jobId || finishing.has(jobId)) return { ok: true };
   finishing.add(jobId);
   try {
@@ -339,16 +369,15 @@ async function finishSlot(jobId, status) {
     } catch (_) {
       /* already closed on the server */
     }
-    if (status === "SKIPPED" && slot?.tabId) {
+    if (park && slot) await parkSlot(slot, status === "SKIPPED" ? "skipped" : "closed");
+    if (closeTab && slot?.tabId) {
+      closingByUs.add(slot.tabId);
       try {
         await chrome.tabs.remove(slot.tabId);
       } catch (_) {
-        /* ignore */
+        closingByUs.delete(slot.tabId);
       }
     }
-    const drafts = await getDrafts();
-    delete drafts[jobId];
-    await chrome.storage.local.set({ drafts });
     await setSlots(slots.filter((s) => s.id !== jobId));
     return fillWindow();
   } finally {
@@ -618,7 +647,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       try {
         const slots = await getSlots();
         const id = msg.jobId || slots[0]?.id;
-        sendResponse(id ? await finishSlot(id, "SKIPPED") : await fillWindow());
+        sendResponse(id ? await finishSlot(id, "SKIPPED", { park: true, closeTab: true }) : await fillWindow());
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
@@ -628,9 +657,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
-    } else if (msg.type === "OPEN_JOB") {
+    } else if (msg.type === "OPEN_JOB" || msg.type === "REOPEN_JOB") {
       try {
-        sendResponse(await focusSlot(msg.jobId));
+        sendResponse(await openSlot(msg.jobId));
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
@@ -642,7 +671,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           slots.find((s) => s.tabId === tabId) ||
           (msg.jobId && slots.find((s) => s.id === msg.jobId)) ||
           slots[0];
-        sendResponse(slot ? await finishSlot(slot.id, "COMPLETED") : { ok: true });
+        sendResponse(slot ? await finishSlot(slot.id, "COMPLETED", { park: false, closeTab: false }) : { ok: true });
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
@@ -678,12 +707,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         pageExtract: null,
         applyDraft: null,
         activeSlots: [],
+        parkedSlots: [],
       });
       const slots = Array.isArray(local.activeSlots) ? local.activeSlots : [];
+      const parked = Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
       sendResponse({
         ...c,
         currentJob: slots[0] || c.currentJob,
         activeSlots: slots,
+        parkedSlots: parked,
         hasToken: Boolean(c.token),
         scanStatus: local.scanStatus || null,
         pageExtract: local.pageExtract || local.applyDraft || slots[0]?.extract || null,
@@ -695,9 +727,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  if (closingByUs.has(tabId)) {
+    closingByUs.delete(tabId);
+    return;
+  }
   getSlots().then((slots) => {
-    const next = slots.map((s) => (s.tabId === tabId ? { ...s, tabId: null } : s));
-    if (JSON.stringify(next) !== JSON.stringify(slots)) setSlots(next);
+    const slot = slots.find((s) => s.tabId === tabId);
+    if (slot) finishSlot(slot.id, "SKIPPED", { park: true, closeTab: false });
   });
 });
 

@@ -14,6 +14,19 @@ function safeUrl(url) {
   return "";
 }
 
+function slotLine(slot, parked) {
+  const extract = slot.extract || {};
+  const marks = JobBiderVerify.clientMarks(extract);
+  const action = parked
+    ? `<button type="button" data-reopen="${esc(slot.id)}">Reopen</button>`
+    : `<button type="button" data-open="${esc(slot.id)}">Open</button>`;
+  return `<div class="job"><div class="meta">${esc(slot.url || "")}</div><div>${esc(
+    extract.client || slot.client || "—"
+  )} · ${esc(slot.budget || "—")}</div><div class="meta">${esc(marks.identity)} · ${esc(marks.rule)}${
+    parked ? " · skipped/closed" : ""
+  }</div>${action}</div>`;
+}
+
 function jobLine(job) {
   const title = esc(job.title || job.external_job_id || "Untitled");
   const bits = [job.status, job.platform, job.client, job.budget].filter(Boolean).map(esc);
@@ -32,15 +45,11 @@ async function refresh() {
   document.getElementById("applyEnabled").checked = Boolean(state.applyEnabled);
   const el = document.getElementById("status");
   const slots = state.activeSlots || (state.currentJob ? [state.currentJob] : []);
-  document.getElementById("slotList").innerHTML = slots
-    .map((slot) => {
-      const extract = slot.extract || {};
-      const marks = JobBiderVerify.clientMarks(extract);
-      return `<div class="job"><div class="meta">${esc(slot.url || "")}</div><div>${esc(
-        extract.client || slot.client || "—"
-      )} · ${esc(slot.budget || "—")}</div><div class="meta">${esc(marks.identity)} · ${esc(marks.rule)}</div></div>`;
-    })
-    .join("");
+  const parked = state.parkedSlots || [];
+  document.getElementById("slotList").innerHTML = [
+    ...slots.map((slot) => slotLine(slot, false)),
+    ...parked.map((slot) => slotLine(slot, true)),
+  ].join("");
   if (!state.hasToken) {
     el.textContent = "API token is missing. Open Options.";
   } else {
@@ -94,6 +103,17 @@ document.getElementById("skip").onclick = async () => {
   if (res?.error) document.getElementById("status").textContent = res.error;
   await refresh();
 };
+document.getElementById("slotList").addEventListener("click", async (event) => {
+  const open = event.target.getAttribute("data-open");
+  const reopen = event.target.getAttribute("data-reopen");
+  if (!open && !reopen) return;
+  const res = await chrome.runtime.sendMessage({
+    type: open ? "OPEN_JOB" : "REOPEN_JOB",
+    jobId: open || reopen,
+  });
+  if (res?.error) document.getElementById("status").textContent = res.error;
+  await refresh();
+});
 document.getElementById("open").onclick = async () => {
   const res = await chrome.runtime.sendMessage({ type: "OPEN_JOB" });
   if (res?.error) document.getElementById("status").textContent = res.error;

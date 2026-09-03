@@ -24,6 +24,7 @@
         background: #171d28;
       }
       .slot .price { color: #f0c27a; font-weight: 600; }
+      .slot.parked { opacity: 0.92; border-style: dashed; }
     </style>
   </head>
   <body>
@@ -34,6 +35,8 @@
     </header>
     <div class="body">
       <div id="slots"></div>
+      <h3 id="parkedHead" hidden>SKIPPED / CLOSED</h3>
+      <div id="parked"></div>
       <button id="open" class="primary">Fill window</button>
       <button id="prepare">Prepare this tab</button>
       <button id="skip">SKIP</button>
