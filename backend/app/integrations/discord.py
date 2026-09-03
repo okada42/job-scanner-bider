@@ -129,17 +129,31 @@ def _verification(job: dict, extra: dict) -> str:
 
 def is_hourly_job(job: dict, extra: dict | None = None) -> bool:
     extra = extra if isinstance(extra, dict) else {}
-    if extra.get("hourly") is True or job.get("hourly") is True:
+    flagged = extra.get("hourly") if extra.get("hourly") is not None else job.get("hourly")
+    if flagged is True:
         return True
+    if flagged is False:
+        return False
     kind = str(extra.get("payment_type") or job.get("payment_type") or "").lower()
     if kind in {"hourly", "時給", "時間単価"}:
         return True
+    if kind in {"fixed", "固定", "固定報酬", "fixed_price"}:
+        return False
     hay = " ".join(
         str(part)
-        for part in (job.get("budget"), job.get("title"), extra.get("tag"))
+        for part in (
+            job.get("budget"),
+            job.get("title"),
+            extra.get("tag"),
+            extra.get("payment_label"),
+        )
         if part
     )
-    return bool(re.search(r"時給|時間単価|/時|\bhourly\b", hay, re.I))
+    return bool(re.search(r"時給|時間単価|時間報酬|/時|\bhourly\b", hay, re.I))
+
+
+def budget_kind_label(job: dict, extra: dict | None = None) -> str:
+    return "Hourly 時給" if is_hourly_job(job, extra) else "Fixed 固定"
 
 
 def _kind(job: dict) -> str:
@@ -190,17 +204,16 @@ def build_new_job_payload(job: dict) -> dict:
         heading = heading[:253] + "..."
 
     lock = "🔒" if job.get("login_required") or extra.get("login_required") else "🆓"
-    bits = [f"Judgment ✅可 🛡️ {lock}"]
-    if is_hourly_job(job, extra):
-        bits.append("Hourly 時給")
+    hourly = is_hourly_job(job, extra)
+    bits = [f"Judgment ✅可 🛡️ {lock}", "Hourly 時給" if hourly else "Fixed 固定"]
     remain = remaining_label(job.get("deadline"))
     if remain:
         bits.append(f"⏱ {remain}")
     money = _yen(job.get("budget"))
-    if is_hourly_job(job, extra) and money != "—":
-        bits.append(f"💰 時給 {money}")
+    if money != "—":
+        bits.append(f"💰 {'時給' if hourly else '固定'} {money}")
     else:
-        bits.append(f"💰 {money}")
+        bits.append("💰 —")
     judgment = " · ".join(bits)
 
     lines = []

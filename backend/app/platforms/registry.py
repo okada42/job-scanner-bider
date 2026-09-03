@@ -70,8 +70,12 @@ def _cw_budget(payment: object) -> str | None:
     if not parts:
         return None
     if len(parts) == 2 and parts[0] != parts[1]:
-        return f"{parts[0]}〜{parts[1]}"
-    return parts[-1]
+        text = f"{parts[0]}〜{parts[1]}"
+    else:
+        text = parts[-1]
+    if _cw_is_hourly(payment) and "時給" not in text:
+        return f"時給 {text}"
+    return text
 
 
 def _posted_at(*nodes) -> str | None:
@@ -104,6 +108,15 @@ def _posted_from_card(card) -> str | None:
         title = el.get("title") or ""
         if re.search(r"\d{4}年\s*\d{1,2}月\s*\d{1,2}日", title):
             return title
+    return None
+
+
+def _payment_hourly_from_text(*parts) -> bool | None:
+    blob = " ".join(str(part) for part in parts if part)
+    if re.search(r"時給|時間単価|時間報酬", blob):
+        return True
+    if re.search(r"固定報酬|固定価格", blob):
+        return False
     return None
 
 
@@ -143,6 +156,10 @@ class CrowdWorksAdapter(PlatformAdapter):
             apps = _apps(text(card))
             if jid in jobs:
                 continue
+            extra = {"posted_at": _posted_from_card(card)}
+            hourly = _payment_hourly_from_text(budget, text(card))
+            if hourly is not None:
+                extra["hourly"] = hourly
             jobs[jid] = ExtractedJob(
                 platform=self.name,
                 external_job_id=jid,
@@ -152,7 +169,7 @@ class CrowdWorksAdapter(PlatformAdapter):
                 budget=budget,
                 deadline=deadline,
                 application_count=apps,
-                extra={"posted_at": _posted_from_card(card)},
+                extra=extra,
             )
 
         data = load_next_data(html)
@@ -169,16 +186,23 @@ class CrowdWorksAdapter(PlatformAdapter):
                     continue
                 full = url if url.startswith("http") else f"https://crowdworks.jp/public/jobs/{jid}"
                 prev = jobs.get(jid)
+                budget = str(node.get("payment") or node.get("budget") or "") or (prev.budget if prev else None)
+                extra = {"posted_at": _posted_at(node) or (prev.extra.get("posted_at") if prev else None)}
+                hourly = _payment_hourly_from_text(budget)
+                if hourly is not None:
+                    extra["hourly"] = hourly
+                elif prev and prev.extra.get("hourly") is not None:
+                    extra["hourly"] = prev.extra.get("hourly")
                 jobs[jid] = ExtractedJob(
                     platform=self.name,
                     external_job_id=jid,
                     url=full.split("?")[0],
                     title=node.get("title") or node.get("job_title") or (prev.title if prev else None),
                     client=node.get("client_name") or node.get("user_name") or (prev.client if prev else None),
-                    budget=str(node.get("payment") or node.get("budget") or "") or (prev.budget if prev else None),
+                    budget=budget,
                     deadline=str(node.get("deadline") or "") or (prev.deadline if prev else None),
                     application_count=_as_int(node.get("applications") or node.get("entry_count")),
-                    extra={"posted_at": _posted_at(node) or (prev.extra.get("posted_at") if prev else None)},
+                    extra=extra,
                 )
         log.info(
             "crowdworks parse url=%s vue=%s total=%s listing_total=%s",
@@ -273,17 +297,23 @@ class LancersAdapter(PlatformAdapter):
                 continue
             jid = m.group(1)
             card = a.find_parent(["li", "article", "div"]) or a
+            budget = text(card.select_one("[class*='price'], [class*='reward'], [class*='budget']")) or _first_yen(
+                text(card)
+            )
+            extra = {"posted_at": _posted_from_card(card)}
+            hourly = _payment_hourly_from_text(budget, text(card))
+            if hourly is not None:
+                extra["hourly"] = hourly
             jobs[jid] = ExtractedJob(
                 platform=self.name,
                 external_job_id=jid,
                 url=absolute(page_url, href.split("?")[0]),
                 title=text(a),
                 client=text(card.select_one("[class*='client'], [class*='user']")),
-                budget=text(card.select_one("[class*='price'], [class*='reward'], [class*='budget']"))
-                or _first_yen(text(card)),
+                budget=budget,
                 deadline=text(card.select_one("[class*='limit'], [class*='remain']")),
                 application_count=_apps(text(card)),
-                extra={"posted_at": _posted_from_card(card)},
+                extra=extra,
             )
         data = load_next_data(html)
         if data:
@@ -327,16 +357,21 @@ class CoconalaAdapter(PlatformAdapter):
                 continue
             jid = m.group(1)
             card = a.find_parent(["li", "article", "div"]) or a
+            budget = _first_yen(text(card))
+            extra = {"posted_at": _posted_from_card(card)}
+            hourly = _payment_hourly_from_text(budget, text(card))
+            if hourly is not None:
+                extra["hourly"] = hourly
             jobs[jid] = ExtractedJob(
                 platform=self.name,
                 external_job_id=jid,
                 url=absolute(page_url, href.split("?")[0]),
                 title=text(a),
                 client=text(card.select_one("[class*='user'], [class*='client']")),
-                budget=_first_yen(text(card)),
+                budget=budget,
                 deadline=text(card.select_one("[class*='limit'], [class*='date']")),
                 application_count=_apps(text(card)),
-                extra={"posted_at": _posted_from_card(card)},
+                extra=extra,
             )
         data = load_next_data(html)
         if data:

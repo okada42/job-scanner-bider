@@ -35,6 +35,7 @@ def _discord_payload(job: dict, item: dict | None = None, source: dict | None = 
         "job_kind": item.get("job_kind") or extra.get("job_kind") or job.get("job_kind"),
         "login_required": extra.get("login_required", item.get("login_required", job.get("login_required"))),
         "category_id": extra.get("category_id") or item.get("category_id") or job.get("category_id") or item.get("category") or job.get("category"),
+        "hourly": extra["hourly"] if extra.get("hourly") is not None else job.get("hourly"),
         "extra": extra,
         "posted_at": extra.get("posted_at") or item.get("posted_at") or job.get("posted_at"),
         "source_url": (source or {}).get("url") or job.get("source_url"),

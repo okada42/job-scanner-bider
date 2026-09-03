@@ -310,6 +310,42 @@ def test_crowdworks_vue_container_listings():
     assert jobs[0].extra.get("posted_at") == "2026-09-03T10:37:51+09:00"
 
 
+def test_crowdworks_vue_hourly_budget():
+    import html as html_lib
+    import json
+
+    from app.integrations.discord import build_new_job_payload
+
+    payload = {
+        "searchResult": {
+            "page": {"current_page": 1, "total_page": 1, "size": 50, "total_entries": 1},
+            "job_offers": [
+                {
+                    "job_offer": {"id": 13424000, "title": "データ入力", "expired_on": "2026-09-10"},
+                    "client": {"username": "desk"},
+                    "payment": {"hourly_payment": {"min_hourly_wage": 1500, "max_hourly_wage": 2000}},
+                }
+            ],
+        },
+    }
+    escaped = html_lib.escape(json.dumps(payload), quote=True)
+    page = f'<div id="vue-container" data="{escaped}"></div>'
+    jobs = CrowdWorksAdapter().parse_listing(page, "https://crowdworks.jp/public/jobs/search")
+    assert jobs[0].extra.get("hourly") is True
+    assert jobs[0].budget == "時給 1,500円〜2,000円"
+    embed = build_new_job_payload(
+        {
+            "platform": "crowdworks",
+            "title": jobs[0].title,
+            "budget": jobs[0].budget,
+            "url": jobs[0].url,
+            "extra": jobs[0].extra,
+        }
+    )["embeds"][0]
+    assert "Hourly 時給" in embed["description"]
+    assert "💰 時給 ¥1,500〜¥2,000" in embed["description"]
+
+
 def test_coconala_listing_reads_posted_title():
     html = """
     <article>

@@ -35,7 +35,8 @@ def test_crowdworks_embed_clickable_title_copyable_url_and_here():
     assert "📅 Posted 2026-09-03 10:37" in embed["description"]
     assert embed["timestamp"] == "2026-09-03T01:37:51Z"
     assert "Judgment ✅可" in embed["description"]
-    assert "💰 ¥5,000" in embed["description"]
+    assert "Fixed 固定" in embed["description"]
+    assert "💰 固定 ¥5,000" in embed["description"]
     assert "Hourly" not in embed["description"]
     assert "Create 21 gray background" not in embed["description"]
     assert embed["footer"]["text"] == "CrowdWorks New Job Notification"
@@ -82,8 +83,24 @@ def test_hourly_job_is_marked():
         }
     )["embeds"][0]
     assert "Hourly 時給" in embed["description"]
+    assert "Fixed 固定" not in embed["description"]
     assert "💰 時給 ¥1,500" in embed["description"]
     assert is_hourly_job({"title": "【時給】ライター"}, {}) is True
+
+
+def test_fixed_flag_wins_over_title_hint():
+    embed = build_new_job_payload(
+        {
+            "platform": "crowdworks",
+            "title": "時給相談可のバナー制作",
+            "budget": "40,000円",
+            "url": "https://crowdworks.jp/public/jobs/10",
+            "extra": {"hourly": False},
+        }
+    )["embeds"][0]
+    assert "Fixed 固定" in embed["description"]
+    assert "💰 固定 ¥40,000" in embed["description"]
+    assert "Hourly" not in embed["description"]
 
 
 def test_job_post_url_is_canonical_without_query():
