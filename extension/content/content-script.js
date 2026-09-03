@@ -63,7 +63,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 (function reportExtract() {
   const platform = window.JobBiderPlatform;
-  if (!platform || typeof platform.extractPage !== "function") return;
+  if (!platform) return;
+  try {
+    if (typeof platform.extractLoggedInUser === "function") {
+      const name = platform.extractLoggedInUser();
+      if (name) chrome.runtime.sendMessage({ type: "PROFILE_USER", name, platform: platform.name });
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  if (typeof platform.extractPage !== "function") return;
   if (platform.isProposalPage && platform.isProposalPage()) return;
   try {
     const extract = platform.extractPage();

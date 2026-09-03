@@ -7,6 +7,23 @@ from app.db import supabase
 
 _AGE_STATUSES = ("PROCESSING", "COMPLETED", "SENT_TO_BIDER", "WAITING_FOR_USER")
 _ACTIVE_STATUSES = ("SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER")
+_CLAIM_BLOCK = (
+    "SENT_TO_BIDER",
+    "PROCESSING",
+    "PROPOSAL_PAGE_READY",
+    "WAITING_FOR_USER",
+    "COMPLETED",
+    "SKIPPED",
+)
+_BIDER_POOL = (
+    "QUEUED",
+    "SENT_TO_BIDER",
+    "PROCESSING",
+    "PROPOSAL_PAGE_READY",
+    "WAITING_FOR_USER",
+    "SKIPPED",
+    "COMPLETED",
+)
 _BASELINE_TTL_SEC = 45.0
 _baseline_lock = threading.Lock()
 _baseline_cache: tuple[float, set[str]] | None = None
@@ -453,3 +470,122 @@ def active_job_count() -> int:
         return res.count or 0
     except Exception:
         return 0
+
+
+def upsert_claim(job_id: str, actor: str, status: str, url: str | None = None) -> None:
+    if not job_id or not actor:
+        return
+    try:
+        supabase().table("bider_claims").upsert(
+            {
+                "job_id": job_id,
+                "actor": actor,
+                "status": status,
+                "url": url,
+                "updated_at": now_iso(),
+            }
+        ).execute()
+    except Exception:
+        return
+
+
+def actor_active_count(actor: str) -> int:
+    if not actor:
+        return active_job_count()
+    try:
+        res = (
+            supabase()
+            .table("bider_claims")
+            .select("job_id", count="exact")
+            .eq("actor", actor)
+            .in_("status", list(_ACTIVE_STATUSES))
+            .execute()
+        )
+        return res.count or 0
+    except Exception:
+        return active_job_count()
+
+
+def actor_active_jobs(actor: str, limit: int = 10) -> list[dict]:
+    if not actor:
+        return active_jobs(limit)
+    try:
+        claims = (
+            supabase()
+            .table("bider_claims")
+            .select("job_id,status,url")
+            .eq("actor", actor)
+            .in_("status", list(_ACTIVE_STATUSES))
+            .order("updated_at", desc=True)
+            .limit(int(limit))
+            .execute()
+            .data
+            or []
+        )
+        out = []
+        for claim in claims:
+            job = get_job(str(claim.get("job_id") or ""))
+            if job:
+                job["claim_status"] = claim.get("status")
+                out.append(job)
+        return out
+    except Exception:
+        return active_jobs(limit)
+
+
+def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
+    if not actor:
+        return queued_jobs(limit)
+    try:
+        sb = supabase()
+        claims = sb.table("bider_claims").select("job_id,status").eq("actor", actor).execute().data or []
+        blocked = {str(c.get("job_id")) for c in claims if c.get("status") in _CLAIM_BLOCK}
+        baseline = _baseline_job_ids(sb)
+        jobs = (
+            sb.table("jobs")
+            .select("*")
+            .in_("status", list(_BIDER_POOL))
+            .order("detected_at", desc=True)
+            .limit(200)
+            .execute()
+            .data
+            or []
+        )
+        out = []
+        for job in jobs:
+            jid = str(job.get("id") or "")
+            if not jid or jid in blocked or jid in baseline:
+                continue
+            out.append(job)
+            if len(out) >= int(limit):
+                break
+        return out
+    except Exception:
+        return queued_jobs(limit)
+
+
+def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
+    if not actor:
+        return list_jobs(status="SKIPPED", limit=limit, new_only=True)
+    try:
+        claims = (
+            supabase()
+            .table("bider_claims")
+            .select("job_id,status")
+            .eq("actor", actor)
+            .eq("status", "SKIPPED")
+            .order("updated_at", desc=True)
+            .limit(int(limit))
+            .execute()
+            .data
+            or []
+        )
+        out = []
+        for claim in claims:
+            job = get_job(str(claim.get("job_id") or ""))
+            if job:
+                job["claim_status"] = "SKIPPED"
+                out.append(job)
+        return out
+    except Exception:
+        return list_jobs(status="SKIPPED", limit=limit, new_only=True)

@@ -9,6 +9,9 @@ async function paint() {
     const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
     const slots = state.activeSlots || (state.currentJob ? [state.currentJob] : []);
     const parked = state.parkedSlots || [];
+    document.getElementById("profileLine").textContent = state.profileUser
+      ? `Profile · ${state.profileUser}`
+      : "Profile · open CrowdWorks while logged in";
     document.getElementById("statusLine").textContent = state.paused
       ? "Paused"
       : slots.length

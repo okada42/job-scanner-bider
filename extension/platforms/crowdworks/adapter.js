@@ -344,6 +344,31 @@ window.JobBiderPlatform = {
   findProposalBox,
   extractDescription: () => extractDetails() || (document.body.innerText || "").slice(0, 20000),
   extractPage,
+  extractLoggedInUser,
   isProposalPage,
   prepare,
 };
+
+function extractLoggedInUser() {
+  const gon = window.gon && window.gon.current_user;
+  if (gon) return String(gon.display_name || gon.username || gon.name || "").trim();
+  const nuxt = window.__NUXT__ && window.__NUXT__.state;
+  const fromState =
+    nuxt &&
+    (nuxt.currentUser || nuxt.current_user || (nuxt.auth && (nuxt.auth.user || nuxt.auth.currentUser)));
+  if (fromState) return String(fromState.displayName || fromState.display_name || fromState.username || fromState.name || "").trim();
+  const sels = [
+    "[data-current-user-name]",
+    "#header-username",
+    ".cw-header_username",
+    ".header-account-name",
+    "header a[href*='/mypage']",
+    "a[href*='/mypage'] .name",
+  ];
+  for (const sel of sels) {
+    const el = document.querySelector(sel);
+    const text = (el && (el.getAttribute("data-current-user-name") || el.innerText) || "").replace(/\s+/g, " ").trim();
+    if (text && text.length <= 40 && !/login|会員|ログイン/i.test(text)) return text;
+  }
+  return "";
+}

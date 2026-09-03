@@ -9,27 +9,25 @@
       .body { padding: 14px 16px; }
       .meta { color: #9aa6b8; margin: 6px 0; }
       .warn { color: #f0c987; }
-      .mark { font-size: 13px; font-weight: 600; color: #eef2f8; margin: 4px 0; }
-      .url { color: #e8b86d; word-break: break-all; font-size: 12px; }
+      .url { color: #e8b86d; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
       button { margin-right: 6px; margin-top: 8px; padding: 8px 10px; }
       button.primary { background: #e8b86d; border: 0; color: #12161e; font-weight: 700; }
       h3 { margin: 16px 0 6px; font-size: 11px; letter-spacing: 0.08em; color: #e8b86d; }
-      .job { padding: 8px 0; border-bottom: 1px solid #2a3344; }
       #jobs { max-height: 420px; overflow: auto; }
-      .slot {
-        border: 1px solid #2a3344;
-        border-radius: 10px;
-        padding: 10px 12px;
-        margin-bottom: 10px;
-        background: #171d28;
+      .row {
+        border-bottom: 1px solid #2a3344;
+        padding: 6px 0;
       }
-      .slot .price { color: #f0c27a; font-weight: 600; }
-      .slot.parked { opacity: 0.92; border-style: dashed; }
+      .row.parked { opacity: 0.88; }
+      .line1 { display: flex; align-items: center; gap: 8px; }
+      .line1 button { margin: 0; flex: 0 0 auto; padding: 4px 8px; }
+      .line2 { color: #9aa6b8; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     </style>
   </head>
   <body>
     <header>
       <h1>JOB BIDER</h1>
+      <div id="profileLine" class="meta">Profile · detecting…</div>
       <div id="statusLine">No active jobs</div>
       <div class="meta" id="biderStatus"></div>
     </header>

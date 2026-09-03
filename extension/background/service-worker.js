@@ -30,6 +30,24 @@ async function cfg() {
   return merged;
 }
 
+async function rememberProfileUser(name) {
+  const value = String(name || "").replace(/\s+/g, " ").trim();
+  if (!value || value.length > 40 || /login|会員|ログイン/i.test(value)) return "";
+  await chrome.storage.local.set({ profileUser: value });
+  return value;
+}
+
+async function getActor() {
+  const local = await chrome.storage.local.get({ profileUser: "", profileKey: "" });
+  if (local.profileUser) return local.profileUser;
+  let key = local.profileKey;
+  if (!key) {
+    key = `ext-${Math.random().toString(36).slice(2, 10)}`;
+    await chrome.storage.local.set({ profileKey: key });
+  }
+  return key;
+}
+
 let ws = null;
 let scanning = false;
 
@@ -66,6 +84,7 @@ function disconnectWs() {
 
 async function fetchApi(base, path, options, token) {
   const url = `${base}${path}`;
+  const actor = await getActor();
   let res;
   try {
     res = await fetch(url, {
@@ -73,6 +92,7 @@ async function fetchApi(base, path, options, token) {
       headers: {
         "Content-Type": "application/json",
         "X-API-Token": token,
+        ...(actor ? { "X-Bider-Actor": actor } : {}),
         ...(options.headers || {}),
       },
     });
@@ -260,6 +280,7 @@ const LISTABLE = new Set([
   "PROPOSAL_PAGE_READY",
   "WAITING_FOR_USER",
   "SKIPPED",
+  "COMPLETED",
 ]);
 
 function jobStatus(job) {
@@ -277,18 +298,21 @@ function addJobs(target, rows, seen) {
 async function listBiderJobs() {
   const jobs = [];
   const seen = new Set();
-  const [pending, listed, skipped, snap] = await Promise.all([
+  const [pending, snap] = await Promise.all([
     api("/api/jobs/pending").catch(() => []),
-    api("/api/jobs?limit=40&new_only=true").catch(() => ({})),
-    api("/api/jobs?status=SKIPPED&limit=20&new_only=true").catch(() => ({})),
     api("/api/jobs/bider").catch(() => ({})),
   ]);
   addJobs(jobs, Array.isArray(pending) ? pending : [], seen);
-  addJobs(jobs, jobsFromApi(listed), seen);
-  addJobs(jobs, jobsFromApi(skipped), seen);
   addJobs(jobs, snap?.active, seen);
   addJobs(jobs, snap?.queued, seen);
+  addJobs(jobs, snap?.skipped, seen);
   if (snap?.current) addJobs(jobs, [snap.current], seen);
+  if (jobs.length) return jobs.filter((job) => LISTABLE.has(jobStatus(job)) || job.claim_status || !job.status);
+  try {
+    addJobs(jobs, jobsFromApi(await api("/api/jobs?limit=40&new_only=true")), seen);
+  } catch (_) {
+    /* ignore */
+  }
   return jobs.filter((job) => LISTABLE.has(jobStatus(job)) || !job.status);
 }
 
@@ -668,10 +692,13 @@ async function runListingScan() {
         const res = await fetch(source.url, { credentials: "include", redirect: "follow" });
         if (!res.ok) throw new Error(`HTTP ${res.status} for ${source.platform}`);
         const html = await res.text();
+        const user = typeof self.parseLoggedInUser === "function" ? self.parseLoggedInUser(html) : "";
+        if (user) await rememberProfileUser(user);
         const jobs = parseListingJobs(html, source.platform);
+        const actor = await getActor();
         const result = await api("/api/jobs/ingest", {
           method: "POST",
-          body: JSON.stringify({ source_id: source.id, jobs }),
+          body: JSON.stringify({ source_id: source.id, jobs, actor }),
         });
         found += result.found ?? jobs.length;
         created += result.created ?? 0;
@@ -834,6 +861,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     } else if (msg.type === "PAGE_EXTRACT") {
       await rememberExtract(msg.extract, _sender.tab?.id);
       sendResponse({ ok: true });
+    } else if (msg.type === "PROFILE_USER") {
+      await rememberProfileUser(msg.name);
+      sendResponse({ ok: true });
     } else if (msg.type === "LIST_JOBS") {
       try {
         const jobs = await listBiderJobs();
@@ -863,6 +893,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         applyDraft: null,
         activeSlots: [],
         parkedSlots: [],
+        profileUser: "",
+        profileKey: "",
       });
       const slots = Array.isArray(local.activeSlots) ? local.activeSlots : [];
       const parked = Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
@@ -872,6 +904,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         activeSlots: slots,
         parkedSlots: parked,
         hasToken: Boolean(c.token),
+        profileUser: local.profileUser || "",
+        profileKey: local.profileKey || "",
         scanStatus: local.scanStatus || null,
         pageExtract: local.pageExtract || local.applyDraft || slots[0]?.extract || null,
         applyDraft: local.applyDraft || slots[0]?.extract || null,

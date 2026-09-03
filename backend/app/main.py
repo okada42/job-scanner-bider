@@ -34,7 +34,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Token", "Authorization", "Accept"],
+    allow_headers=["Content-Type", "X-API-Token", "X-Bider-Actor", "Authorization", "Accept"],
 )
 app.include_router(scanners_router)
 app.include_router(jobs_router)

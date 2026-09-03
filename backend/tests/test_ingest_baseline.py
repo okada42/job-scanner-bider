@@ -386,6 +386,29 @@ def test_collect_next_jobs_force_claims_when_paused(db, monkeypatch):
     assert all(j.get("url") for j in jobs)
 
 
+def test_two_actors_can_claim_the_same_job_url(db, monkeypatch):
+    from app.core.scanner import claim_next_job
+
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    source = sqlite_store.get_source(db["id"])
+    asyncio.run(ingest_jobs([_job("1"), _job("2")], source=source))
+    sqlite_store.update_bider_settings({"enabled": True, "mode": "semi-auto", "max_active_jobs": 1})
+    monkeypatch.setattr("app.store.active_job_count", sqlite_store.active_job_count)
+    monkeypatch.setattr("app.store.update_job", sqlite_store.update_job)
+    monkeypatch.setattr("app.store.queued_jobs", sqlite_store.queued_jobs)
+    monkeypatch.setattr("app.store.upsert_claim", sqlite_store.upsert_claim)
+    monkeypatch.setattr("app.store.actor_active_count", sqlite_store.actor_active_count)
+    monkeypatch.setattr("app.store.queued_for_actor", sqlite_store.queued_for_actor)
+    alice = claim_next_job(force=True, actor="alice")
+    assert alice
+    assert claim_next_job(force=True, actor="alice") is None
+    bob = claim_next_job(force=True, actor="bob")
+    assert bob
+    assert alice["url"] == bob["url"]
+    assert sqlite_store.actor_active_count("alice") == 1
+    assert sqlite_store.actor_active_count("bob") == 1
+
+
 def test_list_jobs_includes_status_at_for_processing(db):
     job = sqlite_store.insert_job(
         {

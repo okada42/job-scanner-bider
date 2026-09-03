@@ -132,6 +132,7 @@ async def ingest_jobs(
     source: dict | None = None,
     baseline: bool | None = None,
     parse_note: str | None = None,
+    actor: str = "",
 ) -> dict:
     """Crawl ingest: store every job id; Discord only listings never stored before.
 
@@ -148,6 +149,8 @@ async def ingest_jobs(
     skipped_bad_client = 0
     discorded = 0
     first_scan = is_first_scan(source) if baseline is None else baseline
+    who = (actor or "").strip()[:80]
+    actor_meta = {"actor": who} if who else {}
     settings = get_bider_settings()
     excluded_clients = (get_control() or {}).get("excluded_clients") or []
     max_queue = int(settings.get("max_queue_size") or 100)
@@ -209,7 +212,7 @@ async def ingest_jobs(
                 continue
             created += 1
             baselined += 1
-            add_event(job["id"], "BASELINE", {"reason": "already_listed_on_first_crawl"})
+            add_event(job["id"], "BASELINE", {"reason": "already_listed_on_first_crawl", **actor_meta})
             continue
 
         if client_is_excluded(row.get("client"), excluded_clients):
@@ -220,7 +223,7 @@ async def ingest_jobs(
                 continue
             created += 1
             skipped_bad_client += 1
-            add_event(job["id"], "SKIPPED", {"reason": "bad_client", "client": row.get("client")})
+            add_event(job["id"], "SKIPPED", {"reason": "bad_client", "client": row.get("client"), **actor_meta})
             continue
 
         matched, reason = job_matches(row, rules)
@@ -233,11 +236,11 @@ async def ingest_jobs(
             log.exception("insert_job failed platform=%s id=%s", platform, external_id)
             continue
         created += 1
-        add_event(job["id"], "RECORDED", {"reason": reason, "matched": matched})
+        add_event(job["id"], "RECORDED", {"reason": reason, "matched": matched, **actor_meta})
         pending_discord.append((job, item))
         if job["status"] == "QUEUED":
             queued += 1
-            add_event(job["id"], "QUEUED", {"reason": reason})
+            add_event(job["id"], "QUEUED", {"reason": reason, **actor_meta})
             await hub.broadcast({"event": "NEW_JOB", "job": bider_payload(job)})
 
     seen_discord: set[str] = {job["id"] for job, _item in pending_discord}
@@ -353,39 +356,51 @@ async def scan_source(source: dict) -> dict:
     return result
 
 
-def claim_next_job(*, force: bool = False) -> dict | None:
-    from app.store import active_job_count, update_job
+def claim_next_job(*, force: bool = False, actor: str = "") -> dict | None:
+    from app.store import active_job_count, actor_active_count, queued_for_actor, update_job, upsert_claim
 
     settings = get_bider_settings()
     if not force and (not settings.get("enabled") or settings.get("mode") == "paused"):
         return None
-    if active_job_count() >= int(settings.get("max_active_jobs") or 1):
-        return None
-    pending = queued_jobs(1)
+    cap = int(settings.get("max_active_jobs") or 1)
+    if actor:
+        if actor_active_count(actor) >= cap:
+            return None
+        pending = queued_for_actor(actor, 1)
+    else:
+        if active_job_count() >= cap:
+            return None
+        pending = queued_jobs(1)
     if not pending:
         return None
     job = update_job(pending[0]["id"], {"status": "SENT_TO_BIDER"})
-    add_event(job["id"], "SENT_TO_BIDER")
+    add_event(job["id"], "SENT_TO_BIDER", {"actor": actor} if actor else None)
+    if actor:
+        upsert_claim(job["id"], actor, "SENT_TO_BIDER", job.get("url"))
     return job
 
 
-def collect_next_jobs(n: int, *, force: bool = False) -> list[dict]:
+def collect_next_jobs(n: int, *, force: bool = False, actor: str = "") -> list[dict]:
     """Hand the extension up to n jobs: in-flight first, then newly claimed queued jobs."""
-    from app.store import active_jobs
+    from app.store import active_jobs, actor_active_jobs
 
     limit = min(10, max(1, int(n or 1)))
     seen: set[str] = set()
     jobs: list[dict] = []
-    for job in active_jobs(limit):
+    inflight = actor_active_jobs(actor, limit) if actor else active_jobs(limit)
+    for job in inflight:
         jid = str(job.get("id") or "")
         if not jid or jid in seen:
             continue
         seen.add(jid)
-        jobs.append(bider_payload(job))
+        payload = bider_payload(job)
+        if job.get("claim_status"):
+            payload["claim_status"] = job["claim_status"]
+        jobs.append(payload)
         if len(jobs) >= limit:
             return jobs
     while len(jobs) < limit:
-        job = claim_next_job(force=force)
+        job = claim_next_job(force=force, actor=actor)
         if not job:
             break
         jid = str(job.get("id") or "")

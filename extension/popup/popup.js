@@ -16,6 +16,9 @@ async function refresh() {
   }
   document.getElementById("scanEnabled").checked = Boolean(state.scanEnabled);
   document.getElementById("applyEnabled").checked = Boolean(state.applyEnabled);
+  document.getElementById("profileLine").textContent = state.profileUser
+    ? `Profile · ${state.profileUser}`
+    : "Profile · open CrowdWorks while logged in";
   const el = document.getElementById("status");
   const slots = state.activeSlots || (state.currentJob ? [state.currentJob] : []);
   const parked = state.parkedSlots || [];

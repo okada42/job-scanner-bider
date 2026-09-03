@@ -53,31 +53,36 @@ function jobBudget(job) {
 
 function jobIsParked(job, parked) {
   if (parked) return true;
-  const status = String(job?.status || job?.parkedReason || "").toUpperCase();
+  const status = String(job?.status || job?.parkedReason || job?.claim_status || "").toUpperCase();
   return status === "SKIPPED" || status === "CLOSED" || status === "FAILED";
+}
+
+function compactFlag(ok, label) {
+  if (ok === true) return `${label}✓`;
+  if (ok === false) return `${label}✗`;
+  return `${label}—`;
 }
 
 function jobCardHtml(job, opts) {
   const options = opts || {};
   const extract = jobExtract(job);
-  const marks = JobBiderVerify.clientMarks(extract);
-  const href = jobEsc(jobSafeUrl(job.url || extract.url) || "—");
+  const href = jobSafeUrl(job.url || extract.url);
   const parked = jobIsParked(job, options.parked);
   const id = jobEsc(job.id || "");
   const action = parked
     ? `<button type="button" data-reopen="${id}">Reopen</button>`
-    : `<button type="button" data-open="${id}">Open</button>${
-        options.skip ? `<button type="button" data-skip="${id}">Skip</button>` : ""
-      }`;
-  return `<article class="slot${parked ? " parked" : ""}" data-id="${id}">
-    <div class="url">${href}</div>
-    <div>Client ${jobEsc(jobClientName(job) || "—")}</div>
-    <div class="mark">${jobEsc(marks.identity)}</div>
-    <div class="mark">${jobEsc(marks.rule)}</div>
-    <div class="price">Budget ${jobEsc(jobBudget(job) || "—")}</div>
-    <div class="meta">Published ${jobEsc(jobPosted(job) || "—")}</div>
-    <div class="meta">Deadline ${jobEsc(jobDeadline(job) || "—")}</div>
-    ${action}
+    : `<button type="button" data-open="${id}">Open</button>`;
+  const bits = [
+    jobClientName(job) || "—",
+    compactFlag(extract.identity, "本人"),
+    compactFlag(extract.ruleCheck, "発注"),
+    jobBudget(job) || "—",
+    `掲載 ${jobPosted(job) || "—"}`,
+    `締切 ${jobDeadline(job) || "—"}`,
+  ];
+  return `<article class="row${parked ? " parked" : ""}" data-id="${id}">
+    <div class="line1"><span class="url" title="${jobEsc(href || "")}">${jobEsc(href || "—")}</span>${action}</div>
+    <div class="line2">${bits.map(jobEsc).join(" · ")}</div>
   </article>`;
 }
 

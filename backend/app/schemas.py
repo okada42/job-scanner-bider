@@ -81,3 +81,4 @@ class JobIngestItem(JobMeta):
 class JobIngestRequest(BaseModel):
     jobs: list[JobIngestItem] = Field(default_factory=list)
     source_id: str | None = None
+    actor: str | None = None

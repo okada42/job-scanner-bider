@@ -173,3 +173,22 @@ function parseCrowdWorksDetail(html) {
 
 self.parseListingJobs = parseListingJobs;
 self.parseCrowdWorksDetail = parseCrowdWorksDetail;
+self.parseLoggedInUser = parseLoggedInUser;
+
+function parseLoggedInUser(html) {
+  const page = String(html || "");
+  const patterns = [
+    /"current_user"\s*:\s*\{[^{}]{0,800}?"(?:display_name|username|name)"\s*:\s*"([^"\\]+)"/i,
+    /"currentUser"\s*:\s*\{[^{}]{0,800}?"(?:displayName|display_name|username|name)"\s*:\s*"([^"\\]+)"/i,
+    /gon\.current_user\s*=\s*\{[^{}]{0,800}?"(?:display_name|username|name)"\s*:\s*"([^"\\]+)"/i,
+    /data-current-user-name=["']([^"']+)["']/i,
+    /id=["']header-username["'][^>]*>\s*([^<]+)/i,
+    /class=["'][^"']*header[^"']*user(?:name)?[^"']*["'][^>]*>\s*([^<]{1,40})/i,
+  ];
+  for (const re of patterns) {
+    const m = page.match(re);
+    const name = m && m[1] ? m[1].replace(/\\u0026/g, "&").trim() : "";
+    if (name && name.length <= 40 && !/login|sign\s*in|会員登録|ログイン/i.test(name)) return name;
+  }
+  return "";
+}

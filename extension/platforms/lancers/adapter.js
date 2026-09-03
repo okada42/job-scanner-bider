@@ -35,6 +35,11 @@ window.JobBiderPlatform = {
   findApplyControl,
   findProposalBox,
   extractDescription,
+  extractLoggedInUser() {
+    const el =
+      document.querySelector("[data-user-name], .c-header__user-name, .header-user-name, a[href*='/mypage']");
+    return (el?.innerText || el?.getAttribute("data-user-name") || "").replace(/\s+/g, " ").trim();
+  },
   isProposalPage() {
     return /proposal|offer|entry/.test(location.pathname) || Boolean(findProposalBox() && document.querySelector("textarea"));
   },

@@ -14,18 +14,12 @@
       .job a { color: #b45309; text-decoration: none; font-weight: 600; }
       .meta { color: #666; font-size: 11px; }
       .empty { color: #888; font-size: 12px; padding: 8px 0; }
-      .slot {
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 8px 10px;
-        margin: 8px 0;
-        background: #fafafa;
-      }
-      .slot .url { color: #b45309; word-break: break-all; font-size: 11px; }
-      .slot .price { color: #92400e; font-weight: 600; }
-      .slot .mark { font-weight: 600; margin: 2px 0; }
-      .slot.parked { opacity: 0.92; border-style: dashed; }
-      .slot button { width: auto; margin: 6px 6px 0 0; padding: 6px 8px; }
+      .row { border-bottom: 1px solid #eee; padding: 6px 0; }
+      .row.parked { opacity: 0.88; }
+      .line1 { display: flex; align-items: center; gap: 8px; }
+      .line1 .url { color: #b45309; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+      .line1 button { width: auto; margin: 0; padding: 4px 8px; }
+      .line2 { color: #666; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     </style>
   </head>
   <body>
@@ -39,6 +33,7 @@
       Enable apply (Bider)
     </label>
     <p class="hint">Search profile: scan on, apply off. Apply profile: scan off, apply on. Stay logged in on the search profile.</p>
+    <div class="meta" id="profileLine">Profile · detecting…</div>
     <div id="status">…</div>
     <div id="slotList"></div>
     <div class="scan" id="scanStatus"></div>

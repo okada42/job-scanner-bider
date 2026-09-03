@@ -130,6 +130,17 @@ def connect() -> sqlite3.Connection:
         if "last_listing_total" not in source_cols:
             conn.execute("alter table scanner_sources add column last_listing_total integer")
         conn.execute(
+            """create table if not exists bider_claims (
+              job_id text not null,
+              actor text not null,
+              status text not null,
+              url text,
+              updated_at text not null,
+              primary key (job_id, actor)
+            )"""
+        )
+        conn.execute("create index if not exists bider_claims_actor_idx on bider_claims (actor, status)")
+        conn.execute(
             "insert or ignore into scanner_control (id, enabled, platforms, record_all, updated_at) values (1, 0, ?, 1, ?)",
             (json.dumps(DEFAULT_CONTROL["platforms"]), now_iso()),
         )
@@ -580,3 +591,118 @@ def active_job_count() -> int:
            ('SENT_TO_BIDER', 'PROCESSING', 'PROPOSAL_PAGE_READY', 'WAITING_FOR_USER')"""
     ).fetchone()
     return int(row["n"] if row else 0)
+
+
+_CLAIM_BLOCK = (
+    "SENT_TO_BIDER",
+    "PROCESSING",
+    "PROPOSAL_PAGE_READY",
+    "WAITING_FOR_USER",
+    "COMPLETED",
+    "SKIPPED",
+)
+
+
+def upsert_claim(job_id: str, actor: str, status: str, url: str | None = None) -> None:
+    if not job_id or not actor:
+        return
+    conn = connect()
+    now = now_iso()
+    with _lock:
+        conn.execute(
+            """insert into bider_claims (job_id, actor, status, url, updated_at)
+               values (?, ?, ?, ?, ?)
+               on conflict(job_id, actor) do update set status = excluded.status, url = coalesce(excluded.url, bider_claims.url), updated_at = excluded.updated_at""",
+            (job_id, actor, status, url, now),
+        )
+        conn.commit()
+
+
+def actor_active_count(actor: str) -> int:
+    if not actor:
+        return active_job_count()
+    conn = connect()
+    placeholders = ",".join("?" * len(_ACTIVE_STATUSES))
+    row = conn.execute(
+        f"select count(*) as n from bider_claims where actor = ? and status in ({placeholders})",
+        (actor, *_ACTIVE_STATUSES),
+    ).fetchone()
+    return int(row["n"] if row else 0)
+
+
+def actor_active_jobs(actor: str, limit: int = 10) -> list[dict]:
+    if not actor:
+        return active_jobs(limit)
+    conn = connect()
+    placeholders = ",".join("?" * len(_ACTIVE_STATUSES))
+    rows = conn.execute(
+        f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
+            join bider_claims c on c.job_id = jobs.id
+            where c.actor = ? and c.status in ({placeholders})
+            order by c.updated_at desc limit ?""",
+        (actor, *_ACTIVE_STATUSES, int(limit)),
+    ).fetchall()
+    out = []
+    for row in rows:
+        job = _job_row(row)
+        job["claim_status"] = row["status"] if "status" in row.keys() else None
+        out.append(job)
+    # claim status is jobs.status from the join ambiguity — fetch from claims
+    claims = {
+        r["job_id"]: r["status"]
+        for r in conn.execute(
+            f"select job_id, status from bider_claims where actor = ? and status in ({placeholders})",
+            (actor, *_ACTIVE_STATUSES),
+        ).fetchall()
+    }
+    for job in out:
+        job["claim_status"] = claims.get(job["id"])
+    return out
+
+
+def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
+    if not actor:
+        return queued_jobs(limit)
+    conn = connect()
+    block = ",".join("?" * len(_CLAIM_BLOCK))
+    pool = ",".join("?" * 7)
+    rows = conn.execute(
+        f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
+            where jobs.status in ({pool})
+            {_NEW_ONLY_SQL}
+            and not exists (
+              select 1 from bider_claims c
+              where c.job_id = jobs.id and c.actor = ? and c.status in ({block})
+            )
+            order by jobs.detected_at desc limit ?""",
+        (
+            "QUEUED",
+            "SENT_TO_BIDER",
+            "PROCESSING",
+            "PROPOSAL_PAGE_READY",
+            "WAITING_FOR_USER",
+            "SKIPPED",
+            "COMPLETED",
+            actor,
+            *_CLAIM_BLOCK,
+            int(limit),
+        ),
+    ).fetchall()
+    return [_job_row(r) for r in rows]
+
+
+def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
+    if not actor:
+        return list_jobs(status="SKIPPED", limit=limit, new_only=True)
+    conn = connect()
+    rows = conn.execute(
+        f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
+            join bider_claims c on c.job_id = jobs.id
+            where c.actor = ? and c.status = 'SKIPPED'
+            order by c.updated_at desc limit ?""",
+        (actor, int(limit)),
+    ).fetchall()
+    out = [_job_row(r) for r in rows]
+    for job in out:
+        job["claim_status"] = "SKIPPED"
+    return out
