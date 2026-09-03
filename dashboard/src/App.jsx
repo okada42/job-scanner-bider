@@ -1,580 +1,276 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, getToken, setToken } from "./api";
+import { useCallback, useEffect, useReducer, useState } from "react";
+import { api, fetchBiderQueue, fetchJobsPage, getToken, setToken } from "./api";
+import { AddSourceForm } from "./components/AddSourceForm";
+import { BadClients } from "./components/BadClients";
+import { HeaderBar } from "./components/HeaderBar";
+import { JobsPanel } from "./components/JobsPanel";
+import { LoginForm } from "./components/LoginForm";
+import { PlatformToggles } from "./components/PlatformToggles";
+import { QueuePanel } from "./components/QueuePanel";
+import { SourcesPanel } from "./components/SourcesPanel";
+import { uniqueClientNames } from "./lib/jobs";
+import { initialState, reducer } from "./lib/reducer";
 
-const PLATFORMS = ["crowdworks", "lancers", "coconala"];
-const LABELS = { crowdworks: "CrowdWorks", lancers: "Lancers", coconala: "Coconala" };
+const JOBS_POLL_MS = 4000;
+const META_POLL_MS = 20000;
 
 export default function App() {
-  const [token, setTok] = useState(getToken());
-  const [login, setLogin] = useState(getToken());
-  const [error, setError] = useState("");
-  const [scanNotes, setScanNotes] = useState({});
-  const [data, setData] = useState(null);
-  const [jobs, setJobs] = useState([]);
-  const [bider, setBider] = useState(null);
-  const [form, setForm] = useState({
-    platform: "crowdworks",
-    url: "",
-    name: "",
-    scan_interval: 60,
-    minimum_budget: "",
-    maximum_applications: "",
-    keywords: "",
-  });
-  const [reportingJobId, setReportingJobId] = useState(null);
-  const [now, setNow] = useState(() => Date.now());
-
+  const [token, setTok] = useState(getToken);
+  const [login, setLogin] = useState(getToken);
+  const [state, dispatch] = useReducer(reducer, initialState);
   const authed = Boolean(token);
 
-  async function refresh() {
-    const scanners = await api("/api/scanners");
-    const settings = await api("/api/settings");
-    const jobList = await api("/api/jobs?limit=80&new_only=true");
-    setData(scanners);
-    setBider(settings.bider);
-    setJobs(jobList);
-  }
+  const loadJobs = useCallback(async (page, pageSize) => {
+    const slow = setTimeout(() => dispatch({ type: "updating", updating: true }), 350);
+    try {
+      const offset = (Math.max(1, page) - 1) * pageSize;
+      const [{ jobs, total }, queue] = await Promise.all([
+        fetchJobsPage({ limit: pageSize, offset }),
+        fetchBiderQueue(),
+      ]);
+      const pageCount = Math.max(1, Math.ceil((total || 0) / pageSize));
+      if (page > pageCount) {
+        dispatch({ type: "page", page: pageCount });
+        const again = await fetchJobsPage({ limit: pageSize, offset: (pageCount - 1) * pageSize });
+        dispatch({ type: "jobs", jobs: again.jobs, total: again.total });
+      } else {
+        dispatch({ type: "jobs", jobs, total });
+      }
+      dispatch({ type: "biderQueue", current: queue.current, queued: queue.queued });
+    } finally {
+      clearTimeout(slow);
+      dispatch({ type: "updating", updating: false });
+    }
+  }, []);
+
+  const loadMeta = useCallback(async () => {
+    const [scanners, settings] = await Promise.all([api("/api/scanners"), api("/api/settings")]);
+    dispatch({ type: "scanners", scanners });
+    dispatch({ type: "settings", bider: settings.bider });
+  }, []);
+
+  const refreshAll = useCallback(async () => {
+    dispatch({ type: "error", error: "" });
+    await Promise.all([loadJobs(state.page, state.pageSize), loadMeta()]);
+  }, [loadJobs, loadMeta, state.page, state.pageSize]);
 
   useEffect(() => {
-    if (!authed) return;
-    refresh().catch((e) => setError(e.message));
-    const t = setInterval(() => refresh().catch(() => {}), 5000);
-    const clock = setInterval(() => setNow(Date.now()), 1000);
+    if (!authed) return undefined;
+    let cancelled = false;
+    Promise.all([loadJobs(state.page, state.pageSize), loadMeta()]).catch((err) => {
+      if (!cancelled) dispatch({ type: "error", error: err.message || "Could not load dashboard." });
+    });
+    const jobsTimer = setInterval(() => {
+      loadJobs(state.page, state.pageSize).catch(() => {});
+    }, JOBS_POLL_MS);
+    const metaTimer = setInterval(() => {
+      loadMeta().catch(() => {});
+    }, META_POLL_MS);
     return () => {
-      clearInterval(t);
-      clearInterval(clock);
+      cancelled = true;
+      clearInterval(jobsTimer);
+      clearInterval(metaTimer);
     };
-  }, [authed]);
-
-  async function reportBadClient(job) {
-    const client = String(job.client || "").trim();
-    if (!client) {
-      window.alert("This job has no client name to report.");
-      return;
-    }
-    if (!window.confirm("Bad client?")) return;
-    setReportingJobId(job.id);
-    setError("");
-    try {
-      const next = uniqueClientNames([
-        ...(data?.control?.excluded_clients || []),
-        client,
-      ]);
-      await api("/api/settings/scanner", {
-        method: "PUT",
-        body: JSON.stringify({ excluded_clients: next }),
-      });
-      await refresh();
-    } catch (err) {
-      setError(err.message || "Could not add this client.");
-    } finally {
-      setReportingJobId(null);
-    }
-  }
+  }, [authed, state.page, state.pageSize, loadJobs, loadMeta]);
 
   async function tryLogin(e) {
     e.preventDefault();
-    setError("");
+    dispatch({ type: "error", error: "" });
     try {
       const res = await api("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ token: login }),
       });
       if (!res?.ok) {
-        setError("Invalid token");
+        dispatch({ type: "error", error: "Invalid token" });
         return;
       }
       setToken(login);
       setTok(login);
     } catch (err) {
-      setError(err.message || "Login failed");
+      dispatch({ type: "error", error: err.message || "Login failed" });
     }
   }
 
+  const reportBadClient = useCallback(
+    async (job) => {
+      const client = String(job.client || "").trim();
+      if (!client) {
+        window.alert("This job has no client name to report.");
+        return;
+      }
+      if (!window.confirm("Bad client?")) return;
+      dispatch({ type: "reporting", id: job.id });
+      dispatch({ type: "error", error: "" });
+      try {
+        const next = uniqueClientNames([...(state.scanners?.control?.excluded_clients || []), client]);
+        await api("/api/settings/scanner", {
+          method: "PUT",
+          body: JSON.stringify({ excluded_clients: next }),
+        });
+        await refreshAll();
+      } catch (err) {
+        dispatch({ type: "error", error: err.message || "Could not add this client." });
+      } finally {
+        dispatch({ type: "reporting", id: null });
+      }
+    },
+    [state.scanners, refreshAll]
+  );
+
+  const onToggleAll = useCallback(() => {
+    const enabled = state.scanners?.control?.enabled;
+    api(enabled ? "/api/scanners/stop" : "/api/scanners/start", { method: "POST" })
+      .then(refreshAll)
+      .catch((err) => dispatch({ type: "error", error: err.message }));
+  }, [state.scanners, refreshAll]);
+
+  const onTogglePlatform = useCallback(
+    (platform, on) => {
+      api(`/api/scanners/platforms/${platform}/${on ? "stop" : "start"}`, { method: "POST" })
+        .then(refreshAll)
+        .catch((err) => dispatch({ type: "error", error: err.message }));
+    },
+    [refreshAll]
+  );
+
+  const onBadClients = useCallback(
+    async (names) => {
+      dispatch({ type: "error", error: "" });
+      await api("/api/settings/scanner", {
+        method: "PUT",
+        body: JSON.stringify({ excluded_clients: names }),
+      });
+      await refreshAll();
+    },
+    [refreshAll]
+  );
+
+  const onAddSource = useCallback(
+    async (body) => {
+      dispatch({ type: "error", error: "" });
+      await api("/api/sources", { method: "POST", body: JSON.stringify(body) });
+      await refreshAll();
+    },
+    [refreshAll]
+  );
+
+  const onSourceInterval = useCallback(
+    async (source, value) => {
+      if (value && value !== source.scan_interval) {
+        await api(`/api/sources/${source.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ scan_interval: value }),
+        });
+        await refreshAll();
+      }
+    },
+    [refreshAll]
+  );
+
+  const onSourceToggle = useCallback(
+    async (source) => {
+      await api(`/api/sources/${source.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: !source.enabled }),
+      });
+      await refreshAll();
+    },
+    [refreshAll]
+  );
+
+  const onSourceScan = useCallback(
+    async (source) => {
+      dispatch({ type: "error", error: "" });
+      try {
+        const result = await api(`/api/sources/${source.id}/scan`, { method: "POST" });
+        dispatch({ type: "scanNote", id: source.id, note: result });
+        await refreshAll();
+      } catch (err) {
+        dispatch({ type: "error", error: err.message || "Scan failed" });
+      }
+    },
+    [refreshAll]
+  );
+
+  const onSourceDelete = useCallback(
+    async (source) => {
+      await api(`/api/sources/${source.id}`, { method: "DELETE" });
+      await refreshAll();
+    },
+    [refreshAll]
+  );
+
+  const onBiderMode = useCallback(
+    (mode) => {
+      api("/api/settings", { method: "PUT", body: JSON.stringify({ mode }) })
+        .then(refreshAll)
+        .catch((err) => dispatch({ type: "error", error: err.message }));
+    },
+    [refreshAll]
+  );
+
+  const onBiderMax = useCallback(
+    (maxActive) => {
+      api("/api/settings", { method: "PUT", body: JSON.stringify({ max_active_jobs: maxActive }) })
+        .then(refreshAll)
+        .catch((err) => dispatch({ type: "error", error: err.message }));
+    },
+    [refreshAll]
+  );
+
   if (!authed) {
-    return (
-      <div className="login-wrap">
-        <form className="card login" onSubmit={tryLogin}>
-          <h1>Job Scanner</h1>
-          <p>Enter the backend API token.</p>
-          <input value={login} onChange={(e) => setLogin(e.target.value)} placeholder="API_TOKEN" />
-          <button type="submit">Sign in</button>
-          {error && <p className="err">{error}</p>}
-        </form>
-      </div>
-    );
+    return <LoginForm login={login} error={state.error} onLoginChange={setLogin} onSubmit={tryLogin} />;
   }
 
-  const control = data?.control;
-  const platforms = data?.platforms || {};
-  const sources = data?.sources || [];
+  const control = state.scanners?.control;
+  const platforms = state.scanners?.platforms || {};
+  const sources = state.scanners?.sources || [];
 
   return (
     <div className="page">
-      <header>
-        <div>
-          <h1>JOB SCANNER</h1>
-          <p className="muted">
-            Add a search-results URL. The first crawl stores every listing already on that page as
-            seen (no Discord, no queue). Later crawls only queue jobs that were never stored before.
-          </p>
-          <p className="muted">
-            The backend fetches the URL on each interval. Login-walled pages still need the Chrome
-            extension on a logged-in search profile; an anonymous GET cannot see those jobs.
-          </p>
-        </div>
-        <div className="overall">
-          <span className={`dot ${control?.enabled ? "on" : "off"}`} />
-          Overall: {control?.enabled ? "RUNNING" : "STOPPED"}
-          <button onClick={() => api(control?.enabled ? "/api/scanners/stop" : "/api/scanners/start", { method: "POST" }).then(refresh)}>
-            {control?.enabled ? "STOP ALL" : "START ALL"}
-          </button>
-        </div>
-      </header>
+      <HeaderBar
+        control={control}
+        updating={state.updating}
+        loaded={state.loaded}
+        onToggleAll={onToggleAll}
+      />
+      {state.error && <p className="err">{state.error}</p>}
 
-      {error && <p className="err">{error}</p>}
-
-      <section className="grid3">
-        {PLATFORMS.map((p) => (
-          <article key={p} className="card">
-            <div className="row">
-              <strong>{LABELS[p]}</strong>
-              <span className={`pill ${platforms[p] && control?.enabled ? "on" : "off"}`}>
-                {platforms[p] && control?.enabled ? "ON" : "OFF"}
-              </span>
-            </div>
-            <button
-              onClick={() =>
-                api(`/api/scanners/platforms/${p}/${platforms[p] ? "stop" : "start"}`, { method: "POST" }).then(refresh)
-              }
-            >
-              {platforms[p] ? "STOP" : "START"}
-            </button>
-          </article>
-        ))}
-      </section>
-
-      <section className="card">
-        <h2>Bad clients</h2>
-        <p className="muted">
-          Paste several client names at once. Separate them with a new line or a comma — you do not
-          need Enter for each name. Duplicate names are skipped. New jobs whose client contains any
-          of these names are stored as seen but never queued or sent to Discord.
-        </p>
-        <BadClientInbox
-          names={control?.excluded_clients || []}
-          onChange={async (names) => {
-            setError("");
-            await api("/api/settings/scanner", {
-              method: "PUT",
-              body: JSON.stringify({ excluded_clients: names }),
-            });
-            refresh();
-          }}
+      <section className="split top-split">
+        <QueuePanel
+          current={state.current}
+          queued={state.queued}
+          bider={state.bider}
+          onMode={onBiderMode}
+          onMaxActive={onBiderMax}
+        />
+        <JobsPanel
+          jobs={state.jobs}
+          total={state.jobsTotal}
+          page={state.page}
+          pageSize={state.pageSize}
+          loaded={state.loaded}
+          reportingJobId={state.reportingJobId}
+          onReport={reportBadClient}
+          onPage={(page) => dispatch({ type: "page", page })}
+          onPageSize={(pageSize) => dispatch({ type: "pageSize", pageSize })}
         />
       </section>
 
-      <section className="card">
-        <h2>Add monitored URL</h2>
-        <form
-          className="add"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setError("");
-            const rules = {
-              minimum_budget: form.minimum_budget ? Number(form.minimum_budget) : null,
-              maximum_applications: form.maximum_applications ? Number(form.maximum_applications) : null,
-              keywords: form.keywords
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean),
-            };
-            await api("/api/sources", {
-              method: "POST",
-              body: JSON.stringify({
-                platform: form.platform,
-                url: form.url,
-                name: form.name || null,
-                scan_interval: Number(form.scan_interval) || 60,
-                rules,
-              }),
-            });
-            setForm({ ...form, url: "", name: "" });
-            refresh();
-          }}
-        >
-          <select value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })}>
-            {PLATFORMS.map((p) => (
-              <option key={p} value={p}>
-                {LABELS[p]}
-              </option>
-            ))}
-          </select>
-          <input placeholder="Search results URL (not a single job page)" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} required />
-          <input placeholder="Name (optional)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <label>
-            Interval (sec)
-            <input
-              type="number"
-              min="5"
-              value={form.scan_interval}
-              onChange={(e) => setForm({ ...form, scan_interval: e.target.value })}
-            />
-          </label>
-          <input placeholder="Min budget" value={form.minimum_budget} onChange={(e) => setForm({ ...form, minimum_budget: e.target.value })} />
-          <input placeholder="Max applications" value={form.maximum_applications} onChange={(e) => setForm({ ...form, maximum_applications: e.target.value })} />
-          <input placeholder="Keywords, comma separated" value={form.keywords} onChange={(e) => setForm({ ...form, keywords: e.target.value })} />
-          <button type="submit">Add source</button>
-        </form>
-      </section>
-
-      <section className="card">
-        <h2>Sources</h2>
-        <table>
-          <thead>
-            <tr>
-              <th></th>
-              <th>Name</th>
-              <th>Platform</th>
-              <th>Interval</th>
-              <th>Last scan</th>
-              <th>
-                Found
-                <div className="muted">today</div>
-              </th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {sources.map((s) => (
-              <tr key={s.id}>
-                <td>
-                  <span className={`dot ${s.enabled && platforms[s.platform] && control?.enabled ? "on" : "off"}`} />
-                </td>
-                <td>
-                  <div>{s.name || LABELS[s.platform]}</div>
-                  <a className="url" href={s.url} target="_blank" rel="noreferrer">
-                    {s.url}
-                  </a>
-                  {s.last_error && <div className="err small">{s.last_error}</div>}
-                  {scanNotes[s.id] && (
-                    <div className="scan-note">
-                      Last scan: found {scanNotes[s.id].found ?? 0}, stored {scanNotes[s.id].created ?? 0}
-                      {scanNotes[s.id].baselined ? `, baseline ${scanNotes[s.id].baselined}` : ""}
-                      {scanNotes[s.id].queued ? `, queued ${scanNotes[s.id].queued}` : ""}
-                      {scanNotes[s.id].discorded ? `, discord ${scanNotes[s.id].discorded}` : ""}
-                      {scanNotes[s.id].sample?.length
-                        ? ` — ${scanNotes[s.id].sample
-                            .map((j) => j.title || j.id)
-                            .filter(Boolean)
-                            .slice(0, 3)
-                            .join(" · ")}`
-                        : ""}
-                    </div>
-                  )}
-                </td>
-                <td>{LABELS[s.platform]}</td>
-                <td>
-                  <input
-                    className="narrow"
-                    type="number"
-                    min="5"
-                    defaultValue={s.scan_interval}
-                    onBlur={async (e) => {
-                      const v = Number(e.target.value);
-                      if (v && v !== s.scan_interval) {
-                        await api(`/api/sources/${s.id}`, {
-                          method: "PATCH",
-                          body: JSON.stringify({ scan_interval: v }),
-                        });
-                        refresh();
-                      }
-                    }}
-                  />
-                  <span className="muted"> sec</span>
-                </td>
-                <td>{s.last_scanned_at ? new Date(s.last_scanned_at).toLocaleTimeString() : "—"}</td>
-                <td>
-                  <div>{s.found ?? s.last_job_count ?? s.job_count ?? 0}</div>
-                  {s.listing_total ? (
-                    <div className="muted">{Number(s.listing_total).toLocaleString()} listed</div>
-                  ) : null}
-                </td>
-                <td className="actions">
-                  <button
-                    onClick={() =>
-                      api(`/api/sources/${s.id}`, {
-                        method: "PATCH",
-                        body: JSON.stringify({ enabled: !s.enabled }),
-                      }).then(refresh)
-                    }
-                  >
-                    {s.enabled ? "Disable" : "Enable"}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      setError("");
-                      try {
-                        const result = await api(`/api/sources/${s.id}/scan`, { method: "POST" });
-                        setScanNotes((prev) => ({ ...prev, [s.id]: result }));
-                        await refresh();
-                      } catch (err) {
-                        setError(err.message || "Scan failed");
-                      }
-                    }}
-                  >
-                    Scan
-                  </button>
-                  <button className="danger" onClick={() => api(`/api/sources/${s.id}`, { method: "DELETE" }).then(refresh)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="split">
-        <article className="card">
-          <h2>Bider</h2>
-          {bider && (
-            <div className="bider">
-              <label>
-                Mode
-                <select
-                  value={bider.mode}
-                  onChange={(e) =>
-                    api("/api/settings", { method: "PUT", body: JSON.stringify({ mode: e.target.value }) }).then(refresh)
-                  }
-                >
-                  <option value="auto">auto</option>
-                  <option value="semi-auto">semi-auto</option>
-                  <option value="paused">paused</option>
-                </select>
-              </label>
-              <label>
-                Max active
-                <input
-                  type="number"
-                  defaultValue={bider.max_active_jobs}
-                  onBlur={(e) =>
-                    api("/api/settings", {
-                      method: "PUT",
-                      body: JSON.stringify({ max_active_jobs: Number(e.target.value) }),
-                    }).then(refresh)
-                  }
-                />
-              </label>
-            </div>
-          )}
-          <Queue jobs={jobs} now={now} />
-        </article>
-        <article className="card grow">
-          <h2>Jobs</h2>
-          <p className="muted">Only new listings after the first crawl. Baseline jobs stay hidden.</p>
-          <table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Platform</th>
-                <th>Title</th>
-                <th>Budget</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="empty">
-                    No new jobs yet. The first crawl is stored as baseline and stays hidden here.
-                  </td>
-                </tr>
-              ) : (
-                jobs.map((j) => (
-                <tr key={j.id}>
-                  <td>
-                    <span className={`pill ${statusPillClass(j.status)}`}>{j.status}</span>
-                    {statusAgeLabel(j, now) && <div className="muted status-age">{statusAgeLabel(j, now)}</div>}
-                  </td>
-                  <td>{LABELS[j.platform] || j.platform}</td>
-                  <td>
-                    {j.title || j.external_job_id}
-                    <div className="muted">{j.client}</div>
-                  </td>
-                  <td>{j.budget || "—"}</td>
-                  <td className="job-actions">
-                    {j.url ? (
-                      <a href={j.url} target="_blank" rel="noreferrer">
-                        Open
-                      </a>
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                    <button
-                      type="button"
-                      className="report-btn"
-                      disabled={reportingJobId === j.id || !String(j.client || "").trim()}
-                      onClick={() => reportBadClient(j)}
-                    >
-                      {reportingJobId === j.id ? "Reporting…" : "Report"}
-                    </button>
-                  </td>
-                </tr>
-              ))
-              )}
-            </tbody>
-          </table>
-        </article>
-      </section>
-    </div>
-  );
-}
-
-function Queue({ jobs, now }) {
-  const queued = useMemo(
-    () => jobs.filter((j) => ["QUEUED", "SENT_TO_BIDER", "PROCESSING", "WAITING_FOR_USER"].includes(j.status)),
-    [jobs]
-  );
-  const current = queued.find((j) => j.status !== "QUEUED");
-  const rest = queued.filter((j) => j.status === "QUEUED");
-  const age = current ? statusAgeLabel(current, now) : null;
-  return (
-    <div>
-      <h3>CURRENT</h3>
-      <p>
-        {current
-          ? `${current.platform} ${current.budget || ""} — ${current.title || current.url}`
-          : "None"}
-      </p>
-      {age && <p className="muted status-age">{current.status} {age}</p>}
-      <h3>QUEUE</h3>
-      <ol>
-        {rest.slice(0, 8).map((j) => (
-          <li key={j.id}>
-            {LABELS[j.platform]} {j.budget || ""} {j.title || j.external_job_id}
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-const AGE_STATUSES = new Set(["PROCESSING", "COMPLETED", "SENT_TO_BIDER", "WAITING_FOR_USER"]);
-
-function statusPillClass(status) {
-  if (status === "QUEUED") return "on";
-  if (status === "PROCESSING" || status === "SENT_TO_BIDER" || status === "WAITING_FOR_USER") return "progress";
-  if (status === "COMPLETED") return "done";
-  return "";
-}
-
-function formatDuration(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  if (hours) return `${hours}h ${minutes}m`;
-  if (minutes) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
-
-function statusAgeLabel(job, now = Date.now()) {
-  if (!AGE_STATUSES.has(job?.status)) return null;
-  const raw = job.status_at || job.updated_at;
-  if (!raw) return null;
-  const started = Date.parse(raw);
-  if (!Number.isFinite(started)) return null;
-  const dur = formatDuration(now - started);
-  if (job.status === "COMPLETED") return `${dur} ago`;
-  return `for ${dur}`;
-}
-
-function uniqueClientNames(names) {
-  const seen = new Set();
-  const out = [];
-  for (const raw of names || []) {
-    const name = String(raw || "").trim();
-    const key = name.toLowerCase();
-    if (!name || seen.has(key)) continue;
-    seen.add(key);
-    out.push(name);
-  }
-  return out;
-}
-
-function splitClientNames(text) {
-  return uniqueClientNames(String(text || "").split(/[\n\r,;、，\t]+/));
-}
-
-function BadClientInbox({ names, onChange }) {
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const listed = uniqueClientNames(names);
-
-  async function addNames(incoming) {
-    const parsed = splitClientNames(Array.isArray(incoming) ? incoming.join("\n") : incoming);
-    if (!parsed.length) return;
-    const have = new Set(listed.map((n) => n.toLowerCase()));
-    const extra = parsed.filter((n) => !have.has(n.toLowerCase()));
-    setDraft("");
-    if (!extra.length) return;
-    setBusy(true);
-    try {
-      await onChange(uniqueClientNames([...listed, ...extra]));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onSubmit(e) {
-    e.preventDefault();
-    await addNames(draft);
-  }
-
-  function onPaste(e) {
-    const text = e.clipboardData?.getData("text") || "";
-    const parsed = splitClientNames(text);
-    if (parsed.length < 2) return;
-    e.preventDefault();
-    addNames(parsed);
-  }
-
-  async function removeName(name) {
-    setBusy(true);
-    try {
-      await onChange(listed.filter((n) => n !== name));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="inbox">
-      <div className="chips">
-        {listed.length === 0 && <p className="muted">No names yet. Paste a list below.</p>}
-        {listed.map((name) => (
-          <span className="chip" key={name.toLowerCase()}>
-            {name}
-            <button type="button" className="chip-x" disabled={busy} onClick={() => removeName(name)} aria-label={`Remove ${name}`}>
-              ×
-            </button>
-          </span>
-        ))}
-      </div>
-      <form className="inbox-add" onSubmit={onSubmit}>
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onPaste={onPaste}
-          placeholder={"NORTH inc.\nクラウドワークス テック\nAcme"}
-          disabled={busy}
-          rows={4}
-        />
-        <button type="submit" disabled={busy || splitClientNames(draft).length === 0}>
-          Add
-        </button>
-      </form>
+      <PlatformToggles platforms={platforms} controlEnabled={Boolean(control?.enabled)} onToggle={onTogglePlatform} />
+      <AddSourceForm onAdd={onAddSource} />
+      <SourcesPanel
+        sources={sources}
+        platforms={platforms}
+        controlEnabled={Boolean(control?.enabled)}
+        scanNotes={state.scanNotes}
+        onInterval={onSourceInterval}
+        onToggle={onSourceToggle}
+        onScan={onSourceScan}
+        onDelete={onSourceDelete}
+      />
+      <BadClients names={control?.excluded_clients || []} onChange={onBadClients} />
     </div>
   );
 }

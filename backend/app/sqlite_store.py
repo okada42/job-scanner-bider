@@ -403,26 +403,55 @@ def delete_source(source_id: str) -> None:
         conn.commit()
 
 
-def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = False) -> list[dict]:
-    conn = connect()
-    extra = ""
-    if new_only:
-        extra = """and not exists (
+_AGE_STATUSES = ("PROCESSING", "COMPLETED", "SENT_TO_BIDER", "WAITING_FOR_USER")
+_ACTIVE_STATUSES = ("SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER")
+_NEW_ONLY_SQL = """and not exists (
             select 1 from job_events e where e.job_id = jobs.id and e.event = 'BASELINE'
         )"""
-    status_at = """(select e.timestamp from job_events e
-                    where e.job_id = jobs.id and e.event = jobs.status
-                    order by e.timestamp desc limit 1)"""
+_STATUS_AT_SQL = f"""CASE WHEN jobs.status IN ({",".join(repr(s) for s in _AGE_STATUSES)}) THEN (
+            select e.timestamp from job_events e
+            where e.job_id = jobs.id and e.event = jobs.status
+            order by e.timestamp desc limit 1
+        ) ELSE jobs.updated_at END"""
+
+
+def count_jobs(status: str | None = None, new_only: bool = False) -> int:
+    conn = connect()
+    extra = _NEW_ONLY_SQL if new_only else ""
+    if status:
+        row = conn.execute(f"select count(*) as n from jobs where status = ? {extra}", (status,)).fetchone()
+    else:
+        row = conn.execute(f"select count(*) as n from jobs where 1=1 {extra}").fetchone()
+    return int(row["n"] if row else 0)
+
+
+def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = False, offset: int = 0) -> list[dict]:
+    conn = connect()
+    extra = _NEW_ONLY_SQL if new_only else ""
+    off = max(0, int(offset))
+    lim = int(limit)
     if status:
         rows = conn.execute(
-            f"select jobs.*, {status_at} as status_at from jobs where status = ? {extra} order by detected_at desc limit ?",
-            (status, int(limit)),
+            f"select jobs.*, {_STATUS_AT_SQL} as status_at from jobs where status = ? {extra} order by detected_at desc limit ? offset ?",
+            (status, lim, off),
         ).fetchall()
     else:
         rows = conn.execute(
-            f"select jobs.*, {status_at} as status_at from jobs where 1=1 {extra} order by detected_at desc limit ?",
-            (int(limit),),
+            f"select jobs.*, {_STATUS_AT_SQL} as status_at from jobs where 1=1 {extra} order by detected_at desc limit ? offset ?",
+            (lim, off),
         ).fetchall()
+    return [_job_row(r) for r in rows]
+
+
+def active_jobs(limit: int = 10) -> list[dict]:
+    conn = connect()
+    placeholders = ",".join("?" * len(_ACTIVE_STATUSES))
+    rows = conn.execute(
+        f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
+            where status in ({placeholders})
+            order by updated_at desc limit ?""",
+        (*_ACTIVE_STATUSES, int(limit)),
+    ).fetchall()
     return [_job_row(r) for r in rows]
 
 

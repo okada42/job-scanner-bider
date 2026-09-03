@@ -101,6 +101,22 @@ def test_list_jobs_new_only_hides_baseline(db):
     assert {j["external_job_id"] for j in sqlite_store.list_jobs(new_only=True)} == {"3"}
 
 
+def test_list_jobs_pagination_and_count(db):
+    asyncio.run(ingest_jobs([_job("1"), _job("2")], source=db))
+    source = sqlite_store.get_source(db["id"])
+    asyncio.run(ingest_jobs([_job("1"), _job("2"), _job("3"), _job("4"), _job("5")], source=source))
+    assert sqlite_store.count_jobs(new_only=False) == 5
+    assert sqlite_store.count_jobs(new_only=True) == 3
+    all_new = sqlite_store.list_jobs(new_only=True, limit=10)
+    page1 = sqlite_store.list_jobs(new_only=True, limit=2, offset=0)
+    page2 = sqlite_store.list_jobs(new_only=True, limit=2, offset=2)
+    assert [j["external_job_id"] for j in page1] == [j["external_job_id"] for j in all_new[:2]]
+    assert [j["external_job_id"] for j in page2] == [j["external_job_id"] for j in all_new[2:]]
+    assert {j["external_job_id"] for j in page1 + page2} == {"3", "4", "5"}
+    assert sqlite_store.count_jobs(status="QUEUED", new_only=True) == 3
+    assert sqlite_store.list_jobs(new_only=True, limit=2, offset=10) == []
+
+
 def test_empty_first_crawl_does_not_complete_baseline(db):
     result = asyncio.run(ingest_jobs([], source=db))
     assert result["baseline"] is True

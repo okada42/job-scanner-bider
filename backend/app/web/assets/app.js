@@ -85,7 +85,8 @@ async function refresh() {
     <div class="meta" style="margin-top:8px">QUEUE</div>
     ${(queue.queued || []).map(jobLine).join("") || "<p class='muted'>Empty</p>"}
   `;
-  const jobs = await api("/api/jobs?limit=40");
+  const payload = await api("/api/jobs?limit=40");
+  const jobs = Array.isArray(payload) ? payload : payload?.jobs || [];
   $("jobs").innerHTML = jobs.map(jobLine).join("") || "<p class='muted'>No jobs yet</p>";
 }
 

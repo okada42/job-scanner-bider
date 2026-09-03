@@ -1,7 +1,15 @@
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from app.db import supabase
+
+_AGE_STATUSES = ("PROCESSING", "COMPLETED", "SENT_TO_BIDER", "WAITING_FOR_USER")
+_ACTIVE_STATUSES = ("SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER")
+_BASELINE_TTL_SEC = 45.0
+_baseline_lock = threading.Lock()
+_baseline_cache: tuple[float, list[str]] | None = None
 
 DEFAULT_CONTROL = {
     "id": 1,
@@ -30,6 +38,52 @@ def add_event(job_id: str, event: str, metadata: dict[str, Any] | None = None) -
     supabase().table("job_events").insert(
         {"job_id": job_id, "event": event, "metadata": metadata or {}}
     ).execute()
+    if event == "BASELINE":
+        _invalidate_baseline_ids()
+
+
+def _invalidate_baseline_ids() -> None:
+    global _baseline_cache
+    with _baseline_lock:
+        _baseline_cache = None
+
+
+def _baseline_job_ids(sb) -> list[str]:
+    global _baseline_cache
+    now = time.monotonic()
+    with _baseline_lock:
+        if _baseline_cache and (now - _baseline_cache[0]) < _BASELINE_TTL_SEC:
+            return _baseline_cache[1]
+    ids: list[str] = []
+    start = 0
+    page = 1000
+    while True:
+        ev = (
+            sb.table("job_events")
+            .select("job_id")
+            .eq("event", "BASELINE")
+            .range(start, start + page - 1)
+            .execute()
+        )
+        rows = ev.data or []
+        ids.extend(str(row["job_id"]) for row in rows if row.get("job_id"))
+        if len(rows) < page:
+            break
+        start += page
+    with _baseline_lock:
+        _baseline_cache = (time.monotonic(), ids)
+    return ids
+
+
+def _jobs_query(sb, status: str | None, new_only: bool, count: bool = False):
+    q = sb.table("jobs").select("id", count="exact") if count else sb.table("jobs").select("*")
+    if status:
+        q = q.eq("status", status)
+    if new_only:
+        baseline_ids = _baseline_job_ids(sb)
+        if baseline_ids:
+            q = q.not_.in_("id", baseline_ids)
+    return q
 
 
 def get_control() -> dict:
@@ -170,41 +224,53 @@ def delete_source(source_id: str) -> None:
     supabase().table("scanner_sources").delete().eq("id", source_id).execute()
 
 
-def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = False) -> list[dict]:
+def count_jobs(status: str | None = None, new_only: bool = False) -> int:
     try:
         sb = supabase()
-        q = sb.table("jobs").select("*").order("detected_at", desc=True)
-        if status:
-            q = q.eq("status", status)
-        if new_only:
-            baseline_ids: list[str] = []
-            start = 0
-            page = 1000
-            while True:
-                ev = (
-                    sb.table("job_events")
-                    .select("job_id")
-                    .eq("event", "BASELINE")
-                    .range(start, start + page - 1)
-                    .execute()
-                )
-                rows = ev.data or []
-                baseline_ids.extend(str(row["job_id"]) for row in rows if row.get("job_id"))
-                if len(rows) < page:
-                    break
-                start += page
-            if baseline_ids:
-                q = q.not_.in_("id", baseline_ids)
-        jobs = q.limit(limit).execute().data or []
+        q = _jobs_query(sb, status, new_only, count=True)
+        res = q.limit(1).execute()
+        return int(res.count or 0)
+    except Exception:
+        return 0
+
+
+def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = False, offset: int = 0) -> list[dict]:
+    try:
+        sb = supabase()
+        off = max(0, int(offset))
+        lim = max(1, int(limit))
+        q = _jobs_query(sb, status, new_only).order("detected_at", desc=True)
+        jobs = q.range(off, off + lim - 1).execute().data or []
+        return _attach_status_at(sb, jobs)
+    except Exception:
+        return []
+
+
+def active_jobs(limit: int = 10) -> list[dict]:
+    try:
+        sb = supabase()
+        jobs = (
+            sb.table("jobs")
+            .select("*")
+            .in_("status", list(_ACTIVE_STATUSES))
+            .order("updated_at", desc=True)
+            .limit(int(limit))
+            .execute()
+            .data
+            or []
+        )
         return _attach_status_at(sb, jobs)
     except Exception:
         return []
 
 
 def _attach_status_at(sb, jobs: list[dict]) -> list[dict]:
-    ids = [str(j.get("id")) for j in jobs if j.get("id")]
-    if not ids:
+    timed = [j for j in jobs if str(j.get("status") or "") in _AGE_STATUSES and j.get("id")]
+    if not timed:
+        for job in jobs:
+            job["status_at"] = job.get("updated_at")
         return jobs
+    ids = [str(j["id"]) for j in timed]
     latest: dict[tuple[str, str], str] = {}
     start = 0
     page = 1000
@@ -213,6 +279,7 @@ def _attach_status_at(sb, jobs: list[dict]) -> list[dict]:
             sb.table("job_events")
             .select("job_id,event,timestamp")
             .in_("job_id", ids)
+            .in_("event", list(_AGE_STATUSES))
             .range(start, start + page - 1)
             .execute()
         )

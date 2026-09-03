@@ -16,6 +16,12 @@ const SCAN_ALARM = "listing-scan";
 const BIDER_ALARM = "bider-keepalive";
 const CHROME_ALARM_FLOOR_MIN = 0.5;
 
+function jobsFromApi(data) {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.jobs)) return data.jobs;
+  return [];
+}
+
 async function cfg() {
   const stored = await chrome.storage.sync.get(DEFAULTS);
   const merged = { ...DEFAULTS, ...stored };
@@ -344,11 +350,12 @@ async function testConnection() {
     };
   }
   try {
-    const jobs = await api("/api/jobs?limit=1&new_only=true");
+    const data = await api("/api/jobs?limit=1&new_only=true");
+    const jobs = jobsFromApi(data);
     return {
       ok: true,
       backendUrl: (await cfg()).backendUrl,
-      jobs: Array.isArray(jobs) ? jobs.length : 0,
+      jobs: jobs.length,
     };
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err), backendUrl: base };
@@ -441,8 +448,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: true });
     } else if (msg.type === "LIST_JOBS") {
       try {
-        const jobs = await api("/api/jobs?limit=25&new_only=true");
-        sendResponse({ ok: true, jobs: Array.isArray(jobs) ? jobs : [], backendUrl: (await cfg()).backendUrl });
+        const data = await api("/api/jobs?limit=25&new_only=true");
+        sendResponse({ ok: true, jobs: jobsFromApi(data), backendUrl: (await cfg()).backendUrl });
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err), jobs: [] });
       }

@@ -18,6 +18,14 @@ export function setToken(token) {
   localStorage.setItem(KEY, token);
 }
 
+export function unwrapJobs(data) {
+  if (Array.isArray(data)) return { jobs: data, total: data.length };
+  return {
+    jobs: Array.isArray(data?.jobs) ? data.jobs : [],
+    total: Number(data?.total) || 0,
+  };
+}
+
 export async function api(path, options = {}) {
   const headers = {
     "Content-Type": "application/json",
@@ -39,4 +47,23 @@ export async function api(path, options = {}) {
   } catch {
     throw new Error(PROXY_HINT);
   }
+}
+
+export async function fetchJobsPage({ limit, offset, newOnly = true } = {}) {
+  const data = await api(`/api/jobs?limit=${limit}&offset=${offset}&new_only=${newOnly}`);
+  return unwrapJobs(data);
+}
+
+export async function fetchBiderQueue() {
+  try {
+    const data = await api("/api/jobs/bider");
+    if (data && !Array.isArray(data)) {
+      return { current: data.current || null, queued: data.queued || [] };
+    }
+  } catch {
+    /* older backends only expose /pending */
+  }
+  const pending = await api("/api/jobs/pending");
+  const queued = Array.isArray(pending) ? pending : pending?.queued || [];
+  return { current: null, queued };
 }

@@ -5,7 +5,7 @@ from app.core.scanner import bider_payload, claim_next_job, ingest_jobs
 from app.db import JOB_STATUSES
 from app.integrations.hub import hub
 from app.schemas import JobIngestRequest, JobStatusUpdate
-from app.store import add_event, get_job, get_source, list_jobs, queued_jobs, update_job
+from app.store import active_jobs, add_event, count_jobs, get_job, get_source, list_jobs, queued_jobs, update_job
 
 router = APIRouter(prefix="/api/jobs", dependencies=[Depends(require_token)])
 
@@ -14,14 +14,23 @@ router = APIRouter(prefix="/api/jobs", dependencies=[Depends(require_token)])
 def jobs(
     status: str | None = None,
     limit: int = Query(default=100, le=500),
+    offset: int = Query(default=0, ge=0),
     new_only: bool = Query(default=True),
 ):
-    return list_jobs(status=status, limit=limit, new_only=new_only)
+    rows = list_jobs(status=status, limit=limit, offset=offset, new_only=new_only)
+    total = count_jobs(status=status, new_only=new_only)
+    return {"jobs": rows, "total": total}
 
 
 @router.get("/pending")
 def pending():
     return queued_jobs(50)
+
+
+@router.get("/bider")
+def bider_snapshot():
+    current_rows = active_jobs(5)
+    return {"current": current_rows[0] if current_rows else None, "queued": queued_jobs(8)}
 
 
 @router.get("/next")

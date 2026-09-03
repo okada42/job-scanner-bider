@@ -4,7 +4,7 @@ Single-user job monitor and application **preparation** assistant.
 
 - **Scanner** crawls listing-search URLs you add (CrowdWorks, Lancers, Coconala). The **first successful crawl is a baseline**: every job already on that page is stored as seen and ignored. After that, only jobs that are **not** already in the jobs table (Supabase, or local SQLite when Supabase is unset) are treated as new. Login-required pages still need the Chrome extension (browser cookies). The backend never stores platform passwords. There is no Google Sheets integration.
 - **FastAPI** stores jobs in **Supabase**, filters them, and notifies **Discord**. New jobs also arrive via `POST /api/jobs/ingest` (`X-API-Token`).
-- **Dashboard** starts/stops the optional Railway HTML scanner and sets **scan interval per source**.
+- **Dashboard** starts/stops the optional Railway HTML scanner, paginates the jobs table (10 or 20 rows), and sets **scan interval per source**.
 - **Chrome extension** (one install, two toggles): **Enable scan** and **Enable apply (Bider)**. It never submits.
 
 There is no Google Sheets integration.
@@ -131,7 +131,7 @@ curl http://127.0.0.1:8000/api/health
 
 If that returns `{"ok":true}`, **do not start a second uvicorn**. Skip to the dashboard. To replace a stale process instead: `netstat -ano | findstr :8000` then `taskkill /PID <pid> /F`. Hyper-V can also reserve 8000 (`netsh interface ipv4 show excludedportrange protocol=tcp`); if 8000 sits in an excluded range, bind another free port (e.g. `--port 8010`) and point the Vite proxy plus the extension `backendUrl` at it.
 
-### 2. Dashboard (port 5173)
+### 2. Dashboard (port 43123)
 
 In a second terminal:
 
@@ -141,9 +141,11 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 and sign in with `API_TOKEN` from the repo-root `.env`. Vite proxies `/api` to `127.0.0.1:8000`. Leave `VITE_API_URL` empty locally.
+Open http://127.0.0.1:43123 and sign in with `API_TOKEN` from the repo-root `.env`. Vite proxies `/api` to `127.0.0.1:8000`. Leave `VITE_API_URL` empty locally.
 
-`ERR_CONNECTION_REFUSED` on 5173 means this Vite process is not running. The backend on 8000 does not serve the dashboard.
+The jobs table sits at the top of the page with Bider CURRENT. Use **10** or **20** rows per page (default 20). Polls keep the last good rows on screen; they do not blank the table.
+
+`ERR_CONNECTION_REFUSED` on 43123 means this Vite process is not running. The backend on 8000 does not serve the dashboard.
 
 ### 3. Chrome extension
 
