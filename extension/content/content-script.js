@@ -46,6 +46,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
+(function watchUserApply() {
+  const FINAL = /送信する|提出する|応募を送信|この内容で応募|^応募する$/;
+  document.addEventListener(
+    "click",
+    (event) => {
+      const el = event.target && event.target.closest ? event.target.closest("a, button, input") : null;
+      if (!el) return;
+      const label = (el.innerText || el.value || el.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+      if (!FINAL.test(label)) return;
+      chrome.runtime.sendMessage({ type: "APPLY_FINISHED" });
+    },
+    true
+  );
+})();
+
 (function reportExtract() {
   const platform = window.JobBiderPlatform;
   if (!platform || typeof platform.extractPage !== "function") return;

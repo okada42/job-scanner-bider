@@ -36,7 +36,7 @@ export default function App() {
       } else {
         dispatch({ type: "jobs", jobs, total });
       }
-      dispatch({ type: "biderQueue", current: queue.current, queued: queue.queued });
+      dispatch({ type: "biderQueue", current: queue.current, queued: queue.queued, active: queue.active });
     } finally {
       clearTimeout(slow);
       dispatch({ type: "updating", updating: false });
@@ -240,6 +240,7 @@ export default function App() {
       <section className="split top-split">
         <QueuePanel
           current={state.current}
+          active={state.active}
           queued={state.queued}
           bider={state.bider}
           onMode={onBiderMode}

@@ -9,6 +9,7 @@ export const initialState = {
   page: 1,
   pageSize: DEFAULT_PAGE_SIZE,
   current: null,
+  active: [],
   queued: [],
   bider: null,
   updating: false,
@@ -38,10 +39,12 @@ export function reducer(state, action) {
       };
     }
     case "biderQueue": {
+      const active = action.active || (action.current ? [action.current] : []);
       const sameCurrent = sameJson(state.current, action.current);
       const sameQueued = sameJson(state.queued, action.queued);
-      if (sameCurrent && sameQueued) return state;
-      return { ...state, current: action.current, queued: action.queued };
+      const sameActive = sameJson(state.active, active);
+      if (sameCurrent && sameQueued && sameActive) return state;
+      return { ...state, current: action.current, queued: action.queued, active };
     }
     case "scanners":
       if (sameJson(state.scanners, action.scanners)) return state;

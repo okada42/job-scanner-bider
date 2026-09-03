@@ -31,12 +31,16 @@ async function refresh() {
   document.getElementById("scanEnabled").checked = Boolean(state.scanEnabled);
   document.getElementById("applyEnabled").checked = Boolean(state.applyEnabled);
   const el = document.getElementById("status");
-  const job = state.currentJob;
-  const extract = state.pageExtract || state.applyDraft;
-  const marks = JobBiderVerify.clientMarks(extract);
-  document.getElementById("previewMarks").textContent = job
-    ? `${extract?.client || job.client || "—"}  ${marks.identity}  ${marks.rule}`
-    : "";
+  const slots = state.activeSlots || (state.currentJob ? [state.currentJob] : []);
+  document.getElementById("slotList").innerHTML = slots
+    .map((slot) => {
+      const extract = slot.extract || {};
+      const marks = JobBiderVerify.clientMarks(extract);
+      return `<div class="job"><div class="meta">${esc(slot.url || "")}</div><div>${esc(
+        extract.client || slot.client || "—"
+      )} · ${esc(slot.budget || "—")}</div><div class="meta">${esc(marks.identity)} · ${esc(marks.rule)}</div></div>`;
+    })
+    .join("");
   if (!state.hasToken) {
     el.textContent = "API token is missing. Open Options.";
   } else {
@@ -44,10 +48,8 @@ async function refresh() {
       ? "Apply stopped"
       : state.paused
         ? "Paused"
-        : job
-          ? job.opened
-            ? job.client || job.title || job.url
-            : `Review ${job.client || "client"} — then Open`
+        : slots.length
+          ? `${slots.length} job tab${slots.length === 1 ? "" : "s"} open`
           : "Idle / waiting";
   }
   const scanEl = document.getElementById("scanStatus");

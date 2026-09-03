@@ -331,6 +331,25 @@ def test_crowdworks_search_links_without_ids_are_ignored():
     assert CrowdWorksAdapter().parse_listing(html, "https://crowdworks.jp/public/jobs/search") == []
 
 
+def test_claim_next_stops_at_max_active(db, monkeypatch):
+    from app.core.scanner import claim_next_job
+
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    source = sqlite_store.get_source(db["id"])
+    asyncio.run(ingest_jobs([_job("1"), _job("2"), _job("3"), _job("4")], source=source))
+    sqlite_store.update_bider_settings({"enabled": True, "mode": "semi-auto", "max_active_jobs": 2})
+    monkeypatch.setattr("app.store.active_job_count", sqlite_store.active_job_count)
+    monkeypatch.setattr("app.store.update_job", sqlite_store.update_job)
+    monkeypatch.setattr("app.store.queued_jobs", sqlite_store.queued_jobs)
+    first = claim_next_job()
+    second = claim_next_job()
+    third = claim_next_job()
+    assert first and second
+    assert {first["external_job_id"], second["external_job_id"]} <= {"2", "3", "4"}
+    assert third is None
+    assert sqlite_store.active_job_count() == 2
+
+
 def test_list_jobs_includes_status_at_for_processing(db):
     job = sqlite_store.insert_job(
         {

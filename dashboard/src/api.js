@@ -58,12 +58,13 @@ export async function fetchBiderQueue() {
   try {
     const data = await api("/api/jobs/bider");
     if (data && !Array.isArray(data)) {
-      return { current: data.current || null, queued: data.queued || [] };
+      const active = Array.isArray(data.active) ? data.active : data.current ? [data.current] : [];
+      return { current: data.current || active[0] || null, active, queued: data.queued || [] };
     }
   } catch {
     /* older backends only expose /pending */
   }
   const pending = await api("/api/jobs/pending");
   const queued = Array.isArray(pending) ? pending : pending?.queued || [];
-  return { current: null, queued };
+  return { current: null, active: [], queued };
 }

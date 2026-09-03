@@ -28,6 +28,8 @@ def settings_get():
 @router.put("/settings", dependencies=[Depends(require_token)])
 def settings_put(body: BiderSettingsUpdate):
     patch = body.model_dump(exclude_none=True)
+    if "max_active_jobs" in patch:
+        patch["max_active_jobs"] = max(1, min(10, int(patch["max_active_jobs"] or 1)))
     return update_bider_settings(patch)
 
 

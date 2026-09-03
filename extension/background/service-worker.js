@@ -45,8 +45,7 @@ async function connect() {
     if (msg.event === "NEW_JOB") {
       const settings = await cfg();
       if (!settings.applyEnabled || settings.paused) return;
-      if (settings.currentJob) return;
-      await previewJob(msg.job);
+      await fillWindow();
     }
   };
   ws.onclose = () => {
@@ -143,6 +142,54 @@ async function migrateLocalhostIfUnreachable() {
   }
 }
 
+let filling = false;
+let fillAgain = false;
+const finishing = new Set();
+
+async function readMaxActive() {
+  try {
+    const data = await api("/api/settings");
+    const n = Number(data?.bider?.max_active_jobs);
+    return Math.max(1, Math.min(10, Number.isFinite(n) ? n : 1));
+  } catch (_) {
+    return 1;
+  }
+}
+
+async function getSlots() {
+  const local = await chrome.storage.local.get({ activeSlots: [] });
+  return Array.isArray(local.activeSlots) ? local.activeSlots : [];
+}
+
+async function setSlots(slots) {
+  await chrome.storage.local.set({ activeSlots: slots });
+  await chrome.storage.sync.set({ currentJob: slots[0] || null });
+}
+
+async function getDrafts() {
+  const local = await chrome.storage.local.get({ drafts: {} });
+  return local.drafts && typeof local.drafts === "object" ? local.drafts : {};
+}
+
+async function setDraft(jobId, extract) {
+  if (!jobId || !extract) return;
+  const drafts = await getDrafts();
+  drafts[jobId] = extract;
+  await chrome.storage.local.set({
+    drafts,
+    pageExtract: extract,
+    applyDraft: extract,
+  });
+}
+
+async function draftFor(jobId, tabId) {
+  const drafts = await getDrafts();
+  if (jobId && drafts[jobId]) return drafts[jobId];
+  const slots = await getSlots();
+  const slot = (tabId && slots.find((s) => s.tabId === tabId)) || (jobId && slots.find((s) => s.id === jobId));
+  return slot?.extract || drafts[slot?.id] || null;
+}
+
 function previewFromJob(job, extra = {}) {
   return {
     client: extra.client || job.client || "—",
@@ -178,39 +225,135 @@ async function fetchJobPreview(job) {
   }
 }
 
-async function previewJob(job) {
-  const c = await cfg();
-  if (!job) return { ok: false, error: "No job to preview." };
-  if (!c.applyEnabled || c.paused) return { ok: false, error: "Enable apply (Bider) first." };
-  if (c.currentJob && c.currentJob.id !== job.id) {
-    return { ok: true, job: c.currentJob };
+async function claimJobs(need) {
+  if (need <= 0) return [];
+  try {
+    const data = await api(`/api/jobs/next-batch?count=${need}`);
+    if (Array.isArray(data?.jobs)) return data.jobs;
+  } catch (_) {
+    /* older API */
   }
-  const stub = previewFromJob(job, { loading: true });
-  await chrome.storage.sync.set({ currentJob: { ...job, opened: false } });
-  await chrome.storage.local.set({ pageExtract: stub, applyDraft: null });
-  const extract = await fetchJobPreview(job);
-  await chrome.storage.local.set({ pageExtract: extract, applyDraft: extract });
-  return { ok: true, job, extract };
+  const out = [];
+  for (let i = 0; i < need; i += 1) {
+    const data = await api("/api/jobs/next");
+    if (!data.job) break;
+    out.push(data.job);
+  }
+  return out;
 }
 
-async function openCurrentJob() {
-  const c = await cfg();
-  if (!c.applyEnabled || c.paused) {
-    return { ok: false, error: "Enable apply (Bider) first." };
-  }
-  if (!c.currentJob?.url) {
-    return { ok: false, error: "No previewed job. Press NEXT first." };
-  }
-  const local = await chrome.storage.local.get({ applyDraft: null, pageExtract: null });
-  const draft = local.applyDraft || local.pageExtract;
-  await chrome.storage.sync.set({ currentJob: { ...c.currentJob, opened: true } });
-  const tab = await chrome.tabs.create({ url: c.currentJob.url, active: true });
-  await api(`/api/jobs/${c.currentJob.id}/status`, {
+async function openPreparedTab(job, extract, focus) {
+  const tab = await chrome.tabs.create({ url: job.url, active: Boolean(focus) });
+  await api(`/api/jobs/${job.id}/status`, {
     method: "POST",
     body: JSON.stringify({ status: "PROCESSING" }),
   });
-  if (tab?.id) await runApplyFlow(tab.id, draft);
-  return { ok: true, job: c.currentJob };
+  if (tab?.id) await runApplyFlow(tab.id, extract, job.id);
+  return tab?.id || null;
+}
+
+async function fillWindow() {
+  const c = await cfg();
+  if (!c.applyEnabled) {
+    return { ok: false, error: "Enable apply (Bider) in the popup first." };
+  }
+  if (c.paused) {
+    return { ok: false, error: "Bider is paused. Click Resume in the popup." };
+  }
+  if (filling) {
+    fillAgain = true;
+    return { ok: true, busy: true, slots: await getSlots() };
+  }
+  filling = true;
+  try {
+    const maxActive = await readMaxActive();
+    let slots = await getSlots();
+    const have = new Set(slots.map((s) => s.id));
+    const need = maxActive - slots.length;
+    if (need > 0) {
+      const jobs = await claimJobs(need);
+      for (let i = 0; i < jobs.length; i += 1) {
+        const job = jobs[i];
+        if (!job?.id || have.has(job.id)) continue;
+        const extract = await fetchJobPreview(job);
+        const tabId = await openPreparedTab(job, extract, slots.length === 0);
+        const slot = {
+          id: job.id,
+          url: job.url,
+          title: job.title,
+          client: extract.client || job.client,
+          budget: job.budget,
+          tabId,
+          opened: true,
+          extract,
+        };
+        slots = [...slots, slot];
+        have.add(job.id);
+        await setDraft(job.id, extract);
+        await setSlots(slots);
+      }
+    }
+    return { ok: true, slots, maxActive };
+  } finally {
+    filling = false;
+    if (fillAgain) {
+      fillAgain = false;
+      fillWindow();
+    }
+  }
+}
+
+async function focusSlot(jobId) {
+  const slots = await getSlots();
+  const slot = jobId ? slots.find((s) => s.id === jobId) : slots[0];
+  if (!slot) {
+    return fillWindow();
+  }
+  if (slot.tabId) {
+    try {
+      await chrome.tabs.update(slot.tabId, { active: true });
+      return { ok: true, job: slot };
+    } catch (_) {
+      /* tab gone */
+    }
+  }
+  const extract = slot.extract || (await fetchJobPreview(slot));
+  const tabId = await openPreparedTab(slot, extract, true);
+  const next = slots.map((s) => (s.id === slot.id ? { ...s, tabId, opened: true, extract } : s));
+  await setDraft(slot.id, extract);
+  await setSlots(next);
+  return { ok: true, job: slot };
+}
+
+async function finishSlot(jobId, status) {
+  if (!jobId || finishing.has(jobId)) return { ok: true };
+  finishing.add(jobId);
+  try {
+    const slots = await getSlots();
+    const slot = slots.find((s) => s.id === jobId);
+    try {
+      await api(`/api/jobs/${jobId}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      });
+    } catch (_) {
+      /* already closed on the server */
+    }
+    if (status === "SKIPPED" && slot?.tabId) {
+      try {
+        await chrome.tabs.remove(slot.tabId);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    const drafts = await getDrafts();
+    delete drafts[jobId];
+    await chrome.storage.local.set({ drafts });
+    await setSlots(slots.filter((s) => s.id !== jobId));
+    return fillWindow();
+  } finally {
+    finishing.delete(jobId);
+  }
 }
 
 function sleep(ms) {
@@ -253,50 +396,46 @@ async function sendToTab(tabId, msg, tries = 10) {
   return { ok: false, error: "Page script did not respond." };
 }
 
-async function rememberExtract(extract) {
+async function rememberExtract(extract, tabId, jobId) {
   if (!extract) return;
-  await chrome.storage.local.set({ pageExtract: extract });
+  const slots = await getSlots();
+  const slot =
+    (jobId && slots.find((s) => s.id === jobId)) ||
+    (tabId && slots.find((s) => s.tabId === tabId)) ||
+    slots.find((s) => s.url && extract.url && s.url === extract.url);
+  if (slot) {
+    const next = slots.map((s) =>
+      s.id === slot.id
+        ? {
+            ...s,
+            extract,
+            client: extract.client || s.client,
+            title: extract.title || s.title,
+          }
+        : s
+    );
+    await setSlots(next);
+    await setDraft(slot.id, extract);
+    return;
+  }
+  await chrome.storage.local.set({ pageExtract: extract, applyDraft: extract });
 }
 
-async function runApplyFlow(tabId, draft) {
+async function runApplyFlow(tabId, draft, jobId) {
   await waitTabComplete(tabId);
-  let extract = draft || null;
+  let extract = draft || (await draftFor(jobId, tabId));
   let first = await sendToTab(tabId, { type: "AUTO_APPLY", extract });
   if (first?.extract) {
     extract = first.extract;
-    await rememberExtract(extract);
-    await chrome.storage.local.set({ applyDraft: extract });
+    await rememberExtract(extract, tabId, jobId);
   }
   if (first?.stage === "clicked_apply") {
     await waitTabComplete(tabId);
     const second = await sendToTab(tabId, { type: "AUTO_APPLY", extract });
-    if (second?.extract) {
-      await rememberExtract(second.extract);
-      await chrome.storage.local.set({ applyDraft: second.extract });
-    }
+    if (second?.extract) await rememberExtract(second.extract, tabId, jobId);
     return second;
   }
   return first;
-}
-
-async function claimAndPreview() {
-  const c = await cfg();
-  if (!c.applyEnabled) {
-    return { ok: false, error: "Enable apply (Bider) in the popup first." };
-  }
-  if (c.paused) {
-    return { ok: false, error: "Bider is paused. Click Resume in the popup." };
-  }
-  const data = await api("/api/jobs/next");
-  if (!data.job) {
-    return {
-      ok: true,
-      job: null,
-      error:
-        "No queued job. On the dashboard, turn Bider ON (not paused) and wait for a new match to enter the queue.",
-    };
-  }
-  return previewJob(data.job);
 }
 
 async function setApplyEnabled(enabled) {
@@ -305,7 +444,7 @@ async function setApplyEnabled(enabled) {
   await chrome.storage.sync.set(patch);
   if (enabled) {
     await connect();
-    return claimAndPreview();
+    return fillWindow();
   }
   disconnectWs();
   return { ok: true };
@@ -474,28 +613,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     } else if (msg.type === "RESUME") {
       await chrome.storage.sync.set({ paused: false, running: true, applyEnabled: true });
       await connect();
-      const now = await cfg();
-      if (!now.currentJob) await claimAndPreview();
-      sendResponse({ ok: true });
-    } else if (msg.type === "SKIP" || msg.type === "NEXT") {
+      sendResponse(await fillWindow());
+    } else if (msg.type === "SKIP") {
       try {
-        const c = await cfg();
-        if (c.currentJob) {
-          await api(`/api/jobs/${c.currentJob.id}/status`, {
-            method: "POST",
-            body: JSON.stringify({ status: msg.type === "SKIP" ? "SKIPPED" : "COMPLETED" }),
-          });
-        }
-        await chrome.storage.sync.set({ currentJob: null });
-        await chrome.storage.local.set({ pageExtract: null, applyDraft: null });
-        const result = await claimAndPreview();
-        sendResponse({ ok: Boolean(result.ok), ...result });
+        const slots = await getSlots();
+        const id = msg.jobId || slots[0]?.id;
+        sendResponse(id ? await finishSlot(id, "SKIPPED") : await fillWindow());
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
+    } else if (msg.type === "NEXT") {
+      try {
+        sendResponse(await fillWindow());
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
     } else if (msg.type === "OPEN_JOB") {
       try {
-        sendResponse(await openCurrentJob());
+        sendResponse(await focusSlot(msg.jobId));
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
+    } else if (msg.type === "APPLY_FINISHED") {
+      try {
+        const slots = await getSlots();
+        const tabId = _sender.tab?.id;
+        const slot =
+          slots.find((s) => s.tabId === tabId) ||
+          (msg.jobId && slots.find((s) => s.id === msg.jobId)) ||
+          slots[0];
+        sendResponse(slot ? await finishSlot(slot.id, "COMPLETED") : { ok: true });
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
@@ -505,15 +652,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: false, error: "No active tab." });
         return;
       }
-      const stored =
-        (await chrome.storage.local.get({ applyDraft: null })).applyDraft ||
-        (await chrome.storage.local.get({ pageExtract: null })).pageExtract;
+      const slots = await getSlots();
+      const slot = slots.find((s) => s.tabId === tab.id);
+      const stored = await draftFor(slot?.id, tab.id);
       const res = await sendToTab(tab.id, { type: "PREPARE", extract: stored });
-      if (res?.extract) await rememberExtract(res.extract);
+      if (res?.extract) await rememberExtract(res.extract, tab.id, slot?.id);
       sendResponse(res || { ok: false, error: "Prepare did not run on this page." });
       return;
     } else if (msg.type === "PAGE_EXTRACT") {
-      await rememberExtract(msg.extract);
+      await rememberExtract(msg.extract, _sender.tab?.id);
       sendResponse({ ok: true });
     } else if (msg.type === "LIST_JOBS") {
       try {
@@ -526,17 +673,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse(await testConnection());
     } else if (msg.type === "GET_STATE") {
       const c = await cfg();
-      const local = await chrome.storage.local.get({ scanStatus: null, pageExtract: null, applyDraft: null });
+      const local = await chrome.storage.local.get({
+        scanStatus: null,
+        pageExtract: null,
+        applyDraft: null,
+        activeSlots: [],
+      });
+      const slots = Array.isArray(local.activeSlots) ? local.activeSlots : [];
       sendResponse({
         ...c,
+        currentJob: slots[0] || c.currentJob,
+        activeSlots: slots,
         hasToken: Boolean(c.token),
         scanStatus: local.scanStatus || null,
-        pageExtract: local.pageExtract || local.applyDraft || null,
-        applyDraft: local.applyDraft || null,
+        pageExtract: local.pageExtract || local.applyDraft || slots[0]?.extract || null,
+        applyDraft: local.applyDraft || slots[0]?.extract || null,
       });
     }
   })();
   return true;
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  getSlots().then((slots) => {
+    const next = slots.map((s) => (s.tabId === tabId ? { ...s, tabId: null } : s));
+    if (JSON.stringify(next) !== JSON.stringify(slots)) setSlots(next);
+  });
 });
 
 migrateLocalhostIfUnreachable();

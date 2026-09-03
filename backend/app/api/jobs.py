@@ -29,8 +29,12 @@ def pending():
 
 @router.get("/bider")
 def bider_snapshot():
-    current_rows = active_jobs(5)
-    return {"current": current_rows[0] if current_rows else None, "queued": queued_jobs(8)}
+    current_rows = active_jobs(10)
+    return {
+        "current": current_rows[0] if current_rows else None,
+        "active": current_rows,
+        "queued": queued_jobs(8),
+    }
 
 
 @router.get("/next")
@@ -39,6 +43,17 @@ def next_job():
     if not job:
         return {"job": None}
     return {"job": bider_payload(job)}
+
+
+@router.get("/next-batch")
+def next_batch(count: int = Query(default=1, ge=1, le=10)):
+    jobs = []
+    for _ in range(count):
+        job = claim_next_job()
+        if not job:
+            break
+        jobs.append(bider_payload(job))
+    return {"jobs": jobs}
 
 
 @router.post("/ingest")

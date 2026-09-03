@@ -20,35 +20,37 @@ function showActionError(text) {
   el.textContent = text;
 }
 
-function paintClient(extract, job) {
-  const name = extract?.client || job?.client || "—";
-  document.getElementById("clientName").textContent = `👤 ${name}`;
+function slotCard(slot, index) {
+  const extract = slot.extract || {};
   const marks = JobBiderVerify.clientMarks(extract);
-  document.getElementById("clientIdentity").textContent = marks.identity;
-  document.getElementById("clientRule").textContent = marks.rule;
-  document.getElementById("clientRecord").textContent = `募集実績 ${extract?.achievement || "—"}`;
-  document.getElementById("clientRate").textContent = `完了率 ${extract?.completionRate || "—"}`;
-  const href = safeUrl(extract?.url || job?.url);
-  document.getElementById("jobUrl").textContent = href || "—";
-  const desc = extract?.details || extract?.description || "";
-  if (extract?.loading) document.getElementById("desc").textContent = "Reading client from the listing…";
-  else if (desc) document.getElementById("desc").textContent = desc.slice(0, 4000);
+  const href = esc(safeUrl(slot.url || extract.url) || "—");
+  const client = esc(extract.client || slot.client || "—");
+  const price = esc(slot.budget || extract.budget || "—");
+  return `<article class="slot" data-id="${esc(slot.id)}">
+    <div class="meta">#${index + 1}${slot.tabId ? "" : " · tab closed"}</div>
+    <div class="url">${href}</div>
+    <div>👤 ${client}</div>
+    <div class="mark">${esc(marks.identity)}</div>
+    <div class="mark">${esc(marks.rule)}</div>
+    <div class="price">予算 ${price}</div>
+    <div class="meta">募集実績 ${esc(extract.achievement || "—")} · 完了率 ${esc(extract.completionRate || "—")}</div>
+    <button type="button" data-focus="${esc(slot.id)}">Focus</button>
+    <button type="button" data-skip="${esc(slot.id)}">Skip</button>
+  </article>`;
 }
 
 async function paint() {
   try {
     const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-    const job = state.currentJob;
-    const extract = state.pageExtract || state.applyDraft;
-    document.getElementById("statusLine").textContent = job
-      ? job.opened
-        ? extract?.client || job.client || "Active job"
-        : "Review client, then Open"
-      : state.paused
-        ? "Paused"
-        : "No active job";
-    paintClient(extract, job);
-    document.getElementById("open").disabled = !job || Boolean(job.opened);
+    const slots = state.activeSlots || (state.currentJob ? [state.currentJob] : []);
+    document.getElementById("statusLine").textContent = state.paused
+      ? "Paused"
+      : slots.length
+        ? `${slots.length} open job${slots.length === 1 ? "" : "s"}`
+        : "No active jobs";
+    document.getElementById("slots").innerHTML = slots.length
+      ? slots.map(slotCard).join("")
+      : `<p class="meta">Set Max active on the dashboard, then Fill window. Each slot shows URL, client, verification, and price.</p>`;
 
     const status = document.getElementById("biderStatus");
     if (!state.hasToken) {
@@ -56,20 +58,15 @@ async function paint() {
       status.textContent = "API token is missing. Open Options and paste the dashboard token.";
     } else if (!state.applyEnabled) {
       status.className = "meta warn";
-      status.textContent = "Bider is OFF. Enable apply in the popup, then press NEXT.";
+      status.textContent = "Bider is OFF. Enable apply in the popup, then Fill window.";
     } else if (state.paused) {
       status.className = "meta warn";
       status.textContent = "Bider is paused.";
-    } else if (job && !job.opened) {
-      status.className = "meta";
-      status.textContent = extract?.loading
-        ? "Loading client info…"
-        : extract?.fetchError
-          ? "Could not read the listing yet. You can still Open."
-          : "Client loaded. Open the URL when you are ready.";
     } else {
       status.className = "meta";
-      status.textContent = job ? "Active job open in a tab." : "Waiting for a queued job.";
+      status.textContent = slots.length
+        ? "Submit on a job tab and the next queued URL opens automatically."
+        : "Waiting for queued jobs.";
     }
 
     const box = document.getElementById("jobs");
@@ -87,7 +84,7 @@ async function paint() {
       .slice(0, 20)
       .map((j) => {
         const title = esc(j.title || j.external_job_id || "Untitled");
-        const meta = [j.status, j.platform, j.client].filter(Boolean).map(esc).join(" · ");
+        const meta = [j.status, j.platform, j.client, j.budget].filter(Boolean).map(esc).join(" · ");
         return `<div class="job"><div>${title}</div><div class="meta">${meta}</div></div>`;
       })
       .join("");
@@ -96,25 +93,28 @@ async function paint() {
   }
 }
 
-async function runQueueAction(type) {
+async function runQueueAction(type, extra) {
   showActionError("Working…");
-  const res = await chrome.runtime.sendMessage({ type });
+  const res = await chrome.runtime.sendMessage({ type, ...(extra || {}) });
   if (!res?.ok || res.error) {
     showActionError(res?.error || `${type} failed.`);
   }
   await paint();
 }
 
-document.getElementById("open").onclick = () => runQueueAction("OPEN_JOB");
+document.getElementById("slots").addEventListener("click", (event) => {
+  const focus = event.target.getAttribute("data-focus");
+  const skip = event.target.getAttribute("data-skip");
+  if (focus) runQueueAction("OPEN_JOB", { jobId: focus });
+  if (skip) runQueueAction("SKIP", { jobId: skip });
+});
+document.getElementById("open").onclick = () => runQueueAction("NEXT");
 document.getElementById("skip").onclick = () => runQueueAction("SKIP");
 document.getElementById("next").onclick = () => runQueueAction("NEXT");
 document.getElementById("options").onclick = () => chrome.runtime.openOptionsPage();
 document.getElementById("prepare").onclick = async () => {
   const res = await chrome.runtime.sendMessage({ type: "PREPARE_TAB" });
-  if (res?.extract) paintClient(res.extract);
-  if (res?.description) document.getElementById("desc").textContent = res.description.slice(0, 4000);
-  else if (res?.stage) document.getElementById("desc").textContent = `Stage: ${res.stage}`;
-  else document.getElementById("desc").textContent = res?.error || "Prepare failed.";
+  if (res?.error) showActionError(res.error);
   await paint();
 };
 
