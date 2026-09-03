@@ -74,6 +74,39 @@ def _cw_budget(payment: object) -> str | None:
     return parts[-1]
 
 
+def _posted_at(*nodes) -> str | None:
+    keys = (
+        "last_released_at",
+        "posted_at",
+        "offered_on",
+        "offered_at",
+        "opened_at",
+        "openedAt",
+        "started_at",
+        "startedAt",
+        "published_at",
+        "publishedAt",
+    )
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        for key in keys:
+            value = node.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+def _posted_from_card(card) -> str | None:
+    if not card:
+        return None
+    for el in card.select("[title]"):
+        title = el.get("title") or ""
+        if re.search(r"\d{4}年\s*\d{1,2}月\s*\d{1,2}日", title):
+            return title
+    return None
+
+
 def _cw_is_hourly(payment: object) -> bool:
     if not isinstance(payment, dict):
         return False
@@ -119,6 +152,7 @@ class CrowdWorksAdapter(PlatformAdapter):
                 budget=budget,
                 deadline=deadline,
                 application_count=apps,
+                extra={"posted_at": _posted_from_card(card)},
             )
 
         data = load_next_data(html)
@@ -144,6 +178,7 @@ class CrowdWorksAdapter(PlatformAdapter):
                     budget=str(node.get("payment") or node.get("budget") or "") or (prev.budget if prev else None),
                     deadline=str(node.get("deadline") or "") or (prev.deadline if prev else None),
                     application_count=_as_int(node.get("applications") or node.get("entry_count")),
+                    extra={"posted_at": _posted_at(node) or (prev.extra.get("posted_at") if prev else None)},
                 )
         log.info(
             "crowdworks parse url=%s vue=%s total=%s listing_total=%s",
@@ -206,6 +241,7 @@ class CrowdWorksAdapter(PlatformAdapter):
                     "hourly": _cw_is_hourly(payment),
                     "job_kind": kind,
                     "tag": tag,
+                    "posted_at": _posted_at(offer, wrap),
                 },
             )
         added = len(jobs) - before
@@ -247,6 +283,7 @@ class LancersAdapter(PlatformAdapter):
                 or _first_yen(text(card)),
                 deadline=text(card.select_one("[class*='limit'], [class*='remain']")),
                 application_count=_apps(text(card)),
+                extra={"posted_at": _posted_from_card(card)},
             )
         data = load_next_data(html)
         if data:
@@ -269,6 +306,7 @@ class LancersAdapter(PlatformAdapter):
                     budget=str(node.get("price") or node.get("budget") or node.get("reward") or "") or None,
                     deadline=str(node.get("ended_at") or node.get("deadline") or "") or None,
                     application_count=_as_int(node.get("proposal_count") or node.get("proposals")),
+                    extra={"posted_at": _posted_at(node)},
                 )
         log.info("lancers parse url=%s total=%s", page_url, len(jobs))
         return list(jobs.values())
@@ -298,6 +336,7 @@ class CoconalaAdapter(PlatformAdapter):
                 budget=_first_yen(text(card)),
                 deadline=text(card.select_one("[class*='limit'], [class*='date']")),
                 application_count=_apps(text(card)),
+                extra={"posted_at": _posted_from_card(card)},
             )
         data = load_next_data(html)
         if data:
@@ -318,6 +357,7 @@ class CoconalaAdapter(PlatformAdapter):
                     budget=str(node.get("budget") or node.get("price") or "") or None,
                     deadline=str(node.get("expire_date") or node.get("deadline") or "") or None,
                     application_count=_as_int(node.get("proposal_count") or node.get("offers_count")),
+                    extra={"posted_at": _posted_at(node)},
                 )
         log.info("coconala parse url=%s total=%s", page_url, len(jobs))
         return list(jobs.values())

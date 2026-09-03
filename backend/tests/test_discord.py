@@ -1,4 +1,4 @@
-from app.integrations.discord import build_new_job_payload, is_hourly_job, job_post_url
+from app.integrations.discord import build_new_job_payload, is_hourly_job, job_post_url, posted_label
 
 
 def test_crowdworks_embed_clickable_title_copyable_url_and_here():
@@ -14,7 +14,11 @@ def test_crowdworks_embed_clickable_title_copyable_url_and_here():
             "source_url": "https://crowdworks.jp/public/jobs/search?category_id=230&order=new",
             "job_kind": "discuss",
             "description": "Create 21 gray background WebP temporary images.",
-            "extra": {"verified": False, "login_required": False},
+            "extra": {
+                "verified": False,
+                "login_required": False,
+                "posted_at": "2026-09-03T10:37:51+09:00",
+            },
         }
     )
     embed = payload["embeds"][0]
@@ -28,6 +32,8 @@ def test_crowdworks_embed_clickable_title_copyable_url_and_here():
     assert embed["description"].count("https://crowdworks.jp/public/jobs/13424135") == 1
     assert "🔵 discuss · PTK53" in embed["description"]
     assert "Verification ❌未認定" in embed["description"]
+    assert "📅 Posted 2026-09-03 10:37" in embed["description"]
+    assert embed["timestamp"] == "2026-09-03T01:37:51Z"
     assert "Judgment ✅可" in embed["description"]
     assert "💰 ¥5,000" in embed["description"]
     assert "Hourly" not in embed["description"]
@@ -90,6 +96,29 @@ def test_job_post_url_is_canonical_without_query():
             }
         )
         == "https://crowdworks.jp/public/jobs/13424135"
+    )
+
+
+def test_posted_time_falls_back_to_detected_at():
+    embed = build_new_job_payload(
+        {
+            "platform": "lancers",
+            "title": "記事作成",
+            "url": "https://www.lancers.jp/work/detail/1",
+            "detected_at": "2026-09-03T01:37:51+00:00",
+        }
+    )["embeds"][0]
+    assert "📅 Posted 2026-09-03 10:37" in embed["description"]
+    assert embed["timestamp"] == "2026-09-03T01:37:51Z"
+
+
+def test_posted_label_reads_japanese_listing_title():
+    assert (
+        posted_label(
+            {},
+            {"posted_at": "2026年9月3日 木曜日 08:16"},
+        )
+        == "📅 Posted 2026-09-03 08:16"
     )
 
 

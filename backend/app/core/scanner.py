@@ -36,6 +36,7 @@ def _discord_payload(job: dict, item: dict | None = None, source: dict | None = 
         "login_required": extra.get("login_required", item.get("login_required", job.get("login_required"))),
         "category_id": extra.get("category_id") or item.get("category_id") or job.get("category_id") or item.get("category") or job.get("category"),
         "extra": extra,
+        "posted_at": extra.get("posted_at") or item.get("posted_at") or job.get("posted_at"),
         "source_url": (source or {}).get("url") or job.get("source_url"),
     }
 

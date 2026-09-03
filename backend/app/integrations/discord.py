@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import httpx
 
 from app.config import settings
+from app.core.clock import format_local_when, parse_when
 from app.platforms.categories import crowdworks_category
 
 log = logging.getLogger("jobscanner.discord")
@@ -57,6 +58,37 @@ def _yen(budget: str | None) -> str:
     if len(parts) >= 2 and parts[0] != parts[1]:
         return f"{parts[0]}〜{parts[1]}"
     return parts[0]
+
+
+def _posted_raw(job: dict, extra: dict) -> str | None:
+    for source in (extra, job):
+        for key in (
+            "posted_at",
+            "last_released_at",
+            "offered_on",
+            "opened_at",
+            "started_at",
+            "published_at",
+        ):
+            value = source.get(key)
+            if value:
+                return value
+    return job.get("detected_at") or job.get("created_at")
+
+
+def posted_label(job: dict, extra: dict | None = None) -> str | None:
+    extra = extra if isinstance(extra, dict) else {}
+    raw = _posted_raw(job, extra)
+    text = format_local_when(raw)
+    return f"📅 Posted {text}" if text else None
+
+
+def posted_timestamp(job: dict, extra: dict | None = None) -> str | None:
+    extra = extra if isinstance(extra, dict) else {}
+    dt = parse_when(_posted_raw(job, extra))
+    if not dt:
+        return None
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def remaining_label(deadline: str | None) -> str | None:
@@ -175,14 +207,16 @@ def build_new_job_payload(job: dict) -> dict:
     if url:
         # Fenced block gets Discord's one-click copy control, directly under the title.
         lines.extend([f"```\n{url}\n```", ""])
+    posted = posted_label(job, extra)
     lines.extend(
         [
             f"{style['dot']} {_kind(job)} · {client}",
             _verification(job, extra),
-            "",
-            judgment,
         ]
     )
+    if posted:
+        lines.append(posted)
+    lines.extend(["", judgment])
     body = "\n".join(lines).strip()
 
     embed = {
@@ -191,6 +225,9 @@ def build_new_job_payload(job: dict) -> dict:
         "color": style["color"],
         "footer": {"text": style["footer"]},
     }
+    stamp = posted_timestamp(job, extra)
+    if stamp:
+        embed["timestamp"] = stamp
     if url:
         embed["url"] = url
     return {

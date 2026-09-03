@@ -6,7 +6,7 @@ import pytest
 from app import sqlite_store
 from app.core import scanner as scanner_mod
 from app.core.scanner import ingest_jobs
-from app.platforms.registry import CrowdWorksAdapter, LancersAdapter
+from app.platforms.registry import CoconalaAdapter, CrowdWorksAdapter, LancersAdapter
 
 
 @pytest.fixture
@@ -269,6 +269,7 @@ def test_crowdworks_vue_container_listings():
                         "id": 13423844,
                         "title": "Androidアプリの通信解析",
                         "expired_on": "2026-09-10",
+                        "last_released_at": "2026-09-03T10:37:51+09:00",
                     },
                     "client": {"username": "studio-k", "is_employer_certification": True},
                     "payment": {"fixed_price_payment": {"min_budget": 30000, "max_budget": 80000}},
@@ -290,6 +291,19 @@ def test_crowdworks_vue_container_listings():
     assert adapter.last_meta.get("parsed") == 1
     assert jobs[0].extra.get("verified") is True
     assert jobs[0].extra.get("hourly") is False
+    assert jobs[0].extra.get("posted_at") == "2026-09-03T10:37:51+09:00"
+
+
+def test_coconala_listing_reads_posted_title():
+    html = """
+    <article>
+      <a href="/requests/5249264">リール動画</a>
+      <span title="2026年9月3日 木曜日 08:16">2時間前</span>
+    </article>
+    """
+    jobs = CoconalaAdapter().parse_listing(html, "https://coconala.com/requests?sort_by=new")
+    assert jobs[0].external_job_id == "5249264"
+    assert jobs[0].extra.get("posted_at") == "2026年9月3日 木曜日 08:16"
 
 
 def test_crowdworks_search_links_without_ids_are_ignored():
