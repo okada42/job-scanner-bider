@@ -1,7 +1,7 @@
 function slotLine(slot, parked, focused) {
   return JobBiderCard.jobCardHtml(slot, {
     parked: Boolean(parked),
-    sent: !parked,
+    ready: !parked,
     opened: true,
     skip: !parked,
     focused: Boolean(focused),

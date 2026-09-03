@@ -29,11 +29,13 @@ if use_local_store():
         now_iso,
         queued_for_actor,
         queued_jobs,
+        touch_actor,
         update_bider_settings,
         update_control,
         update_job,
         update_source,
         upsert_claim,
+        upsert_queued_claim,
     )
 else:
     from app.supabase_store import (  # noqa: F401
@@ -64,9 +66,11 @@ else:
         now_iso,
         queued_for_actor,
         queued_jobs,
+        touch_actor,
         update_bider_settings,
         update_control,
         update_job,
         update_source,
         upsert_claim,
+        upsert_queued_claim,
     )

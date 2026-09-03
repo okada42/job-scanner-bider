@@ -22,7 +22,7 @@ async function paint() {
           .map((slot) =>
             JobBiderCard.jobCardHtml(slot, {
               skip: true,
-              sent: true,
+              ready: true,
               opened: true,
               focused: Boolean(state.focusedTabId && slot.tabId === state.focusedTabId),
             })

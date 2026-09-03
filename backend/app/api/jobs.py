@@ -4,7 +4,7 @@ from app.auth import require_token
 from app.core.scanner import bider_payload, claim_next_job, collect_next_jobs, ingest_jobs
 from app.db import JOB_STATUSES
 from app.integrations.hub import hub
-from app.schemas import JobIngestRequest, JobStatusUpdate
+from app.schemas import ClaimBatch, JobIngestRequest, JobStatusUpdate
 from app.store import (
     active_jobs,
     actor_active_jobs,
@@ -18,8 +18,10 @@ from app.store import (
     list_jobs,
     queued_for_actor,
     queued_jobs,
+    touch_actor,
     update_job,
     upsert_claim,
+    upsert_queued_claim,
 )
 
 router = APIRouter(prefix="/api/jobs", dependencies=[Depends(require_token)])
@@ -39,7 +41,7 @@ def user_state_label(status: str | None) -> str:
     if raw in _SKIPPED_STATES:
         return "skipped"
     if raw in _SENT_STATES:
-        return "sent"
+        return "ready"
     return "queued"
 
 
@@ -141,6 +143,27 @@ async def ingest(body: JobIngestRequest, actor: str = Depends(_actor)):
     return await ingest_jobs(body.jobs, source=source, actor=who)
 
 
+@router.post("/actor")
+def register_actor(actor: str = Depends(_actor)):
+    who = touch_actor(actor)
+    return {"ok": True, "actor": who or None}
+
+
+@router.post("/claims")
+def register_claims(body: ClaimBatch, actor: str = Depends(_actor)):
+    who = touch_actor(actor or (body.actor or ""))
+    if not who:
+        return {"ok": False, "actor": None, "updated": 0}
+    n = 0
+    for item in (body.claims or [])[:40]:
+        jid = str(item.job_id or "").strip()
+        if not jid:
+            continue
+        upsert_queued_claim(jid, who, item.url)
+        n += 1
+    return {"ok": True, "actor": who, "updated": n}
+
+
 @router.get("/{job_id}")
 def job(job_id: str):
     row = get_job(job_id)
@@ -162,6 +185,7 @@ async def set_status(job_id: str, body: JobStatusUpdate, actor: str = Depends(_a
     if who:
         meta["actor"] = who
         upsert_claim(job_id, who, body.status, job.get("url"))
+        touch_actor(who)
     add_event(job_id, body.status, meta)
     await hub.broadcast({"event": "JOB_STATUS", "job": bider_payload(job)})
     return job

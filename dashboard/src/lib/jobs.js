@@ -16,13 +16,13 @@ export function statusPillClass(status) {
 export function claimStateLabel(status) {
   const raw = String(status || "").trim().toUpperCase();
   if (SKIPPED_CLAIM.has(raw)) return "skipped";
-  if (SENT_CLAIM.has(raw)) return "sent";
+  if (SENT_CLAIM.has(raw)) return "ready";
   return "queued";
 }
 
 export function userStatePillClass(state) {
   if (state === "queued") return "on";
-  if (state === "sent") return "progress";
+  if (state === "ready") return "progress";
   if (state === "skipped") return "off";
   return "";
 }
@@ -32,7 +32,7 @@ export function jobUserStates(job) {
     return job.user_states
       .map((row) => ({
         actor: String(row?.actor || "").trim(),
-        state: String(row?.state || claimStateLabel(row?.status) || "queued").toLowerCase(),
+        state: String(row?.state || claimStateLabel(row?.status) || "queued").toLowerCase().replace(/^sent$/, "ready"),
         updated_at: row?.updated_at || null,
       }))
       .filter((row) => row.actor);
@@ -73,7 +73,7 @@ export function statusAgeLabel(job, now = Date.now()) {
 export function userStateAgeLabel(states, now = Date.now()) {
   let latest = NaN;
   for (const row of states || []) {
-    if (row?.state !== "sent" || !row.updated_at) continue;
+    if (row?.state !== "ready" || !row.updated_at) continue;
     const started = Date.parse(row.updated_at);
     if (Number.isFinite(started) && (!Number.isFinite(latest) || started > latest)) latest = started;
   }
@@ -103,5 +103,5 @@ export function sameJson(a, b) {
 }
 
 export function needsClock(jobs) {
-  return (jobs || []).some((job) => jobUserStates(job).some((row) => row.state === "sent" && row.updated_at));
+  return (jobs || []).some((job) => jobUserStates(job).some((row) => row.state === "ready" && row.updated_at));
 }

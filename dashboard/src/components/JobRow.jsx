@@ -27,7 +27,7 @@ function jobRowEqual(prev, next) {
     return false;
   }
   const states = jobUserStates(b);
-  return states.some((row) => row.state === "sent") ? prev.now === next.now : true;
+  return states.some((row) => row.state === "ready") ? prev.now === next.now : true;
 }
 
 export const JobRow = memo(function JobRow({ job, now, reporting, onReport }) {

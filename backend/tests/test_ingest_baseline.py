@@ -503,7 +503,7 @@ def test_list_jobs_attaches_per_user_states(db, monkeypatch):
         ("kenji", "SKIPPED"),
     }
     assert {(s["actor"], s["state"]) for s in one["user_states"]} == {
-        ("alice", "sent"),
+        ("alice", "ready"),
         ("kenji", "skipped"),
     }
     assert {(s["actor"], s["state"]) for s in two["user_states"]} == {
@@ -535,6 +535,43 @@ def test_yesterday_claim_shows_as_queued_today(db, monkeypatch):
     row = attach_user_states([sqlite_store.get_job(job["id"])])[0]
     assert row["claims"] == []
     assert row["user_states"] == [{"actor": "kenji", "state": "queued", "updated_at": None}]
+
+
+def test_platform_actor_heartbeat_marks_jobs_queued(db, monkeypatch):
+    from app.api.jobs import attach_user_states
+
+    monkeypatch.setattr("app.api.jobs.claims_for_jobs", sqlite_store.claims_for_jobs)
+    monkeypatch.setattr("app.api.jobs.list_claim_actors", sqlite_store.list_claim_actors)
+
+    job = sqlite_store.insert_job(
+        {
+            "platform": "crowdworks",
+            "external_job_id": "actor-hello-1",
+            "url": "https://crowdworks.jp/public/jobs/actor-hello-1",
+            "title": "hello job",
+            "status": "QUEUED",
+        }
+    )
+    assert sqlite_store.touch_actor("kenji") == "kenji"
+    assert sqlite_store.touch_actor("ext-abc123") == ""
+    row = attach_user_states([sqlite_store.get_job(job["id"])])[0]
+    assert row["user_states"] == [{"actor": "kenji", "state": "queued", "updated_at": None}]
+
+
+def test_queued_claim_does_not_replace_skipped(db):
+    job = sqlite_store.insert_job(
+        {
+            "platform": "crowdworks",
+            "external_job_id": "keep-skip-1",
+            "url": "https://crowdworks.jp/public/jobs/keep-skip-1",
+            "title": "skip job",
+            "status": "QUEUED",
+        }
+    )
+    sqlite_store.upsert_claim(job["id"], "kenji", "SKIPPED", job.get("url"))
+    sqlite_store.upsert_queued_claim(job["id"], "kenji", job.get("url"))
+    claim = sqlite_store.get_claim(job["id"], "kenji")
+    assert claim and claim["status"] == "SKIPPED"
 
 
 def test_list_jobs_includes_status_at_for_processing(db):

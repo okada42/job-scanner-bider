@@ -34,6 +34,7 @@ async function rememberProfileUser(name) {
   const value = String(name || "").replace(/\s+/g, " ").trim();
   if (!value || value.length > 40 || /login|会員|ログイン/i.test(value)) return "";
   await chrome.storage.local.set({ profileUser: value });
+  registerActor();
   return value;
 }
 
@@ -58,6 +59,7 @@ async function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   const url = c.backendUrl.replace(/^http/, "ws") + "/ws/bider?token=" + encodeURIComponent(c.token);
   ws = new WebSocket(url);
+  registerActor();
   ws.onmessage = async (ev) => {
     let msg;
     try {
@@ -363,6 +365,52 @@ function jobStatus(job) {
   return String(job?.status || "").toUpperCase();
 }
 
+function isPlatformUser(name) {
+  const value = String(name || "").replace(/\s+/g, " ").trim();
+  return Boolean(value) && value.length <= 40 && !/^ext-/i.test(value) && !/login|会員|ログイン/i.test(value);
+}
+
+async function registerActor() {
+  const actor = await getActor();
+  if (!isPlatformUser(actor)) return "";
+  try {
+    await api("/api/jobs/actor", { method: "POST", body: JSON.stringify({ actor }) });
+  } catch (_) {
+    /* older backends */
+  }
+  return actor;
+}
+
+let lastQueuedSync = 0;
+
+async function syncQueuedClaims(jobs) {
+  const actor = await registerActor();
+  if (!actor) return;
+  const now = Date.now();
+  if (now - lastQueuedSync < 15000) return;
+  const queued = (jobs || [])
+    .filter((job) => {
+      if (!job?.id) return false;
+      const status = String(job.claim_status || job.status || "").toUpperCase();
+      if (IN_FLIGHT.has(status) || status === "SKIPPED" || status === "CLOSED" || status === "FAILED") return false;
+      return true;
+    })
+    .slice(0, 40);
+  if (!queued.length) return;
+  lastQueuedSync = now;
+  try {
+    await api("/api/jobs/claims", {
+      method: "POST",
+      body: JSON.stringify({
+        actor,
+        claims: queued.map((job) => ({ job_id: job.id, status: "QUEUED", url: job.url || null })),
+      }),
+    });
+  } catch (_) {
+    /* older backends */
+  }
+}
+
 function addJobs(target, rows, seen) {
   for (const job of rows || []) {
     if (!job?.id || seen.has(job.id)) continue;
@@ -513,9 +561,10 @@ async function fillWindow() {
     fillAgain = true;
     return { ok: true, busy: true, slots: await getSlots() };
   }
-  filling = true;
-  try {
-    const maxActive = await readMaxActive();
+    filling = true;
+    try {
+      registerActor();
+      const maxActive = await readMaxActive();
     let slots = await reviveSlots(await getSlots());
     const have = new Set(slots.map((s) => s.id));
     const need = maxActive - slots.length;
@@ -991,6 +1040,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     } else if (msg.type === "LIST_JOBS") {
       try {
         const jobs = await listBiderJobs();
+        syncQueuedClaims(jobs);
         const drafts = await getDrafts();
         const slots = await getSlots();
         const parked = await getParked();

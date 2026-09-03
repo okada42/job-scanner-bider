@@ -67,8 +67,8 @@ function jobTag(job, opts) {
   const status = String(job?.claim_status || job?.status || "").toUpperCase();
   if (options.parked || status === "SKIPPED" || status === "FAILED" || reason === "skipped") return "skipped";
   if (status === "CLOSED") return "closed";
-  if (options.sent || ["SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER"].includes(status)) {
-    return "sent";
+  if (options.ready || options.sent || ["SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER"].includes(status)) {
+    return "ready";
   }
   return "queued";
 }

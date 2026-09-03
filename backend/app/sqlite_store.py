@@ -144,6 +144,13 @@ def connect() -> sqlite3.Connection:
         if "day" not in claim_cols:
             conn.execute("alter table bider_claims add column day text")
         conn.execute(
+            """create table if not exists bider_actors (
+              actor text primary key,
+              updated_at text not null,
+              day text
+            )"""
+        )
+        conn.execute(
             "insert or ignore into scanner_control (id, enabled, platforms, record_all, updated_at) values (1, 0, ?, 1, ?)",
             (json.dumps(DEFAULT_CONTROL["platforms"]), now_iso()),
         )
@@ -712,14 +719,69 @@ def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
     return out
 
 
+def _platform_actor(actor: str) -> str:
+    name = str(actor or "").strip()[:80]
+    if not name or name.lower().startswith("ext-"):
+        return ""
+    return name
+
+
+def touch_actor(actor: str) -> str:
+    name = _platform_actor(actor)
+    if not name:
+        return ""
+    conn = connect()
+    with _lock:
+        conn.execute(
+            """insert into bider_actors (actor, updated_at, day) values (?, ?, ?)
+               on conflict(actor) do update set updated_at = excluded.updated_at, day = excluded.day""",
+            (name, now_iso(), claim_day()),
+        )
+        conn.commit()
+    return name
+
+
 def list_claim_actors() -> list[str]:
     conn = connect()
     rows = conn.execute(
-        """select distinct actor from bider_claims
-           where actor is not null and trim(actor) != ''
-           order by actor collate nocase"""
+        """select actor from bider_actors
+           where actor is not null and trim(actor) != '' and lower(actor) not like 'ext-%'
+           union
+           select distinct actor from bider_claims
+           where actor is not null and trim(actor) != '' and lower(actor) not like 'ext-%'
+           order by 1 collate nocase"""
     ).fetchall()
-    return [str(r["actor"]).strip() for r in rows if str(r["actor"] or "").strip()]
+    return [_platform_actor(r["actor"]) for r in rows if _platform_actor(r["actor"])]
+
+
+def get_claim(job_id: str, actor: str) -> dict | None:
+    if not job_id or not actor:
+        return None
+    conn = connect()
+    row = conn.execute(
+        "select job_id, actor, status, url, updated_at, day from bider_claims where job_id = ? and actor = ?",
+        (job_id, actor),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "job_id": row["job_id"],
+        "actor": row["actor"],
+        "status": row["status"],
+        "url": row["url"],
+        "updated_at": row["updated_at"],
+        "day": row["day"],
+    }
+
+
+def upsert_queued_claim(job_id: str, actor: str, url: str | None = None) -> None:
+    name = _platform_actor(actor)
+    if not job_id or not name:
+        return
+    current = get_claim(job_id, name)
+    if current and str(current.get("day") or "") == claim_day() and current.get("status") in _CLAIM_BLOCK:
+        return
+    upsert_claim(job_id, name, "QUEUED", url)
 
 
 def claims_for_jobs(job_ids: list[str]) -> dict[str, list[dict]]:

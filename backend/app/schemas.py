@@ -40,6 +40,17 @@ class JobStatusUpdate(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ClaimItem(BaseModel):
+    job_id: str
+    status: str = "QUEUED"
+    url: str | None = None
+
+
+class ClaimBatch(BaseModel):
+    claims: list[ClaimItem] = Field(default_factory=list)
+    actor: str | None = None
+
+
 class BiderSettingsUpdate(BaseModel):
     enabled: bool | None = None
     mode: BiderMode | None = None

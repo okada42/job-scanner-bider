@@ -628,13 +628,73 @@ def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
         return list_jobs(status="SKIPPED", limit=limit, new_only=True)
 
 
+def _platform_actor(actor: str) -> str:
+    name = str(actor or "").strip()[:80]
+    if not name or name.lower().startswith("ext-"):
+        return ""
+    return name
+
+
+def touch_actor(actor: str) -> str:
+    name = _platform_actor(actor)
+    if not name:
+        return ""
+    payload = {"actor": name, "updated_at": now_iso(), "day": claim_day()}
+    try:
+        supabase().table("bider_actors").upsert(payload).execute()
+    except Exception:
+        payload.pop("day", None)
+        try:
+            supabase().table("bider_actors").upsert(payload).execute()
+        except Exception:
+            return name
+    return name
+
+
 def list_claim_actors() -> list[str]:
+    names: set[str] = set()
+    try:
+        rows = supabase().table("bider_actors").select("actor").execute().data or []
+        names.update(_platform_actor(row.get("actor")) for row in rows)
+    except Exception:
+        pass
     try:
         rows = supabase().table("bider_claims").select("actor").execute().data or []
-        names = {str(row.get("actor") or "").strip() for row in rows}
-        return sorted((name for name in names if name), key=str.lower)
+        names.update(_platform_actor(row.get("actor")) for row in rows)
     except Exception:
-        return []
+        pass
+    return sorted((name for name in names if name), key=str.lower)
+
+
+def get_claim(job_id: str, actor: str) -> dict | None:
+    name = _platform_actor(actor) or str(actor or "").strip()
+    if not job_id or not name:
+        return None
+    try:
+        rows = (
+            supabase()
+            .table("bider_claims")
+            .select("job_id,actor,status,url,updated_at,day")
+            .eq("job_id", job_id)
+            .eq("actor", name)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def upsert_queued_claim(job_id: str, actor: str, url: str | None = None) -> None:
+    name = _platform_actor(actor)
+    if not job_id or not name:
+        return
+    current = get_claim(job_id, name)
+    if current and _claim_is_today(current) and current.get("status") in _CLAIM_BLOCK:
+        return
+    upsert_claim(job_id, name, "QUEUED", url)
 
 
 def claims_for_jobs(job_ids: list[str]) -> dict[str, list[dict]]:
