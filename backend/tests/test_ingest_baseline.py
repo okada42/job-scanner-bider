@@ -432,6 +432,75 @@ def test_yesterday_claim_does_not_block_today(db, monkeypatch):
     assert again and again["id"] == first["id"]
 
 
+def test_list_jobs_attaches_per_user_states(db, monkeypatch):
+    from app.api.jobs import attach_user_states
+
+    monkeypatch.setattr("app.api.jobs.claims_for_jobs", sqlite_store.claims_for_jobs)
+    monkeypatch.setattr("app.api.jobs.list_claim_actors", sqlite_store.list_claim_actors)
+
+    first = sqlite_store.insert_job(
+        {
+            "platform": "crowdworks",
+            "external_job_id": "claim-1",
+            "url": "https://crowdworks.jp/public/jobs/claim-1",
+            "title": "claimed job",
+            "status": "QUEUED",
+        }
+    )
+    second = sqlite_store.insert_job(
+        {
+            "platform": "crowdworks",
+            "external_job_id": "claim-2",
+            "url": "https://crowdworks.jp/public/jobs/claim-2",
+            "title": "open job",
+            "status": "QUEUED",
+        }
+    )
+    sqlite_store.upsert_claim(first["id"], "kenji", "SKIPPED", first.get("url"))
+    sqlite_store.upsert_claim(first["id"], "alice", "SENT_TO_BIDER", first.get("url"))
+
+    rows = attach_user_states([first, second])
+    one = next(j for j in rows if j["id"] == first["id"])
+    two = next(j for j in rows if j["id"] == second["id"])
+    assert {(c["actor"], c["status"]) for c in one["claims"]} == {
+        ("alice", "SENT_TO_BIDER"),
+        ("kenji", "SKIPPED"),
+    }
+    assert {(s["actor"], s["state"]) for s in one["user_states"]} == {
+        ("alice", "sent"),
+        ("kenji", "skipped"),
+    }
+    assert {(s["actor"], s["state"]) for s in two["user_states"]} == {
+        ("alice", "queued"),
+        ("kenji", "queued"),
+    }
+
+
+def test_yesterday_claim_shows_as_queued_today(db, monkeypatch):
+    from app.api.jobs import attach_user_states
+
+    monkeypatch.setattr("app.api.jobs.claims_for_jobs", sqlite_store.claims_for_jobs)
+    monkeypatch.setattr("app.api.jobs.list_claim_actors", sqlite_store.list_claim_actors)
+
+    job = sqlite_store.insert_job(
+        {
+            "platform": "crowdworks",
+            "external_job_id": "day-reset-1",
+            "url": "https://crowdworks.jp/public/jobs/day-reset-1",
+            "title": "reset job",
+            "status": "QUEUED",
+        }
+    )
+    sqlite_store.upsert_claim(job["id"], "kenji", "SKIPPED", job.get("url"))
+    conn = sqlite_store.connect()
+    conn.execute("update bider_claims set day = '2020-01-01' where actor = 'kenji'")
+    conn.commit()
+
+    row = attach_user_states([sqlite_store.get_job(job["id"])])[0]
+    assert row["claims"] == []
+    assert row["user_states"] == [{"actor": "kenji", "state": "queued", "updated_at": None}]
+
+
 def test_list_jobs_includes_status_at_for_processing(db):
     job = sqlite_store.insert_job(
         {

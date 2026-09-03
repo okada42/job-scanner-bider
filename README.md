@@ -145,7 +145,7 @@ npm run dev
 
 Open http://127.0.0.1:43123 and sign in with `API_TOKEN` from the repo-root `.env`. Vite proxies `/api` to `127.0.0.1:8000`. Leave `VITE_API_URL` empty locally.
 
-The jobs table sits at the top of the page with Bider CURRENT. Use **10** or **20** rows per page (default 20). Polls keep the last good rows on screen; they do not blank the table.
+The jobs table sits at the top of the page next to Bider mode and max active. Status is per Chrome profile (`kenji queued`, `kenji skipped`, `kenji sent`). Use **10** or **20** rows per page (default 20). Polls keep the last good rows on screen; they do not blank the table.
 
 `ERR_CONNECTION_REFUSED` on 43123 means this Vite process is not running. The backend on 8000 does not serve the dashboard.
 

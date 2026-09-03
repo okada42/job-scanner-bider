@@ -626,3 +626,49 @@ def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
         return out
     except Exception:
         return list_jobs(status="SKIPPED", limit=limit, new_only=True)
+
+
+def list_claim_actors() -> list[str]:
+    try:
+        rows = supabase().table("bider_claims").select("actor").execute().data or []
+        names = {str(row.get("actor") or "").strip() for row in rows}
+        return sorted((name for name in names if name), key=str.lower)
+    except Exception:
+        return []
+
+
+def claims_for_jobs(job_ids: list[str]) -> dict[str, list[dict]]:
+    ids = [str(jid) for jid in job_ids if jid]
+    if not ids:
+        return {}
+    try:
+        rows = (
+            supabase()
+            .table("bider_claims")
+            .select("job_id,actor,status,updated_at,day")
+            .in_("job_id", ids)
+            .execute()
+            .data
+            or []
+        )
+        out: dict[str, list[dict]] = {}
+        for row in rows:
+            if not _claim_is_today(row):
+                continue
+            jid = str(row.get("job_id") or "")
+            actor = str(row.get("actor") or "").strip()
+            if not jid or not actor:
+                continue
+            out.setdefault(jid, []).append(
+                {
+                    "actor": actor,
+                    "status": row.get("status"),
+                    "updated_at": row.get("updated_at"),
+                    "day": row.get("day"),
+                }
+            )
+        for claims in out.values():
+            claims.sort(key=lambda c: str(c.get("actor") or "").lower())
+        return out
+    except Exception:
+        return {}

@@ -1,5 +1,11 @@
 import { memo } from "react";
-import { AGE_STATUSES, LABELS, statusAgeLabel, statusPillClass } from "../lib/jobs";
+import {
+  LABELS,
+  jobUserStates,
+  sameJson,
+  userStateAgeLabel,
+  userStatePillClass,
+} from "../lib/jobs";
 
 function jobRowEqual(prev, next) {
   if (prev.reporting !== next.reporting || prev.onReport !== next.onReport) return false;
@@ -14,19 +20,33 @@ function jobRowEqual(prev, next) {
     a.client !== b.client ||
     a.budget !== b.budget ||
     a.url !== b.url ||
-    a.platform !== b.platform
+    a.platform !== b.platform ||
+    !sameJson(a.user_states, b.user_states) ||
+    !sameJson(a.claims, b.claims)
   ) {
     return false;
   }
-  return AGE_STATUSES.has(b.status) ? prev.now === next.now : true;
+  const states = jobUserStates(b);
+  return states.some((row) => row.state === "sent") ? prev.now === next.now : true;
 }
 
 export const JobRow = memo(function JobRow({ job, now, reporting, onReport }) {
-  const age = statusAgeLabel(job, now);
+  const states = jobUserStates(job);
+  const age = userStateAgeLabel(states, now);
   return (
     <tr>
       <td>
-        <span className={`pill ${statusPillClass(job.status)}`}>{job.status}</span>
+        {states.length === 0 ? (
+          <span className="muted">—</span>
+        ) : (
+          <div className="user-states">
+            {states.map((row) => (
+              <span key={row.actor} className={`pill ${userStatePillClass(row.state)}`}>
+                {row.actor} {row.state}
+              </span>
+            ))}
+          </div>
+        )}
         {age && <div className="status-age">{age}</div>}
       </td>
       <td>{LABELS[job.platform] || job.platform}</td>

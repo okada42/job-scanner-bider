@@ -10,9 +10,11 @@ from app.store import (
     actor_active_jobs,
     actor_skipped_jobs,
     add_event,
+    claims_for_jobs,
     count_jobs,
     get_job,
     get_source,
+    list_claim_actors,
     list_jobs,
     queued_for_actor,
     queued_jobs,
@@ -21,6 +23,54 @@ from app.store import (
 )
 
 router = APIRouter(prefix="/api/jobs", dependencies=[Depends(require_token)])
+
+_SENT_STATES = {
+    "SENT_TO_BIDER",
+    "PROCESSING",
+    "PROPOSAL_PAGE_READY",
+    "WAITING_FOR_USER",
+    "COMPLETED",
+}
+_SKIPPED_STATES = {"SKIPPED", "CLOSED", "FAILED"}
+
+
+def user_state_label(status: str | None) -> str:
+    raw = str(status or "").strip().upper()
+    if raw in _SKIPPED_STATES:
+        return "skipped"
+    if raw in _SENT_STATES:
+        return "sent"
+    return "queued"
+
+
+def attach_user_states(rows: list[dict]) -> list[dict]:
+    ids = [str(job.get("id") or "") for job in rows if job.get("id")]
+    today = claims_for_jobs(ids)
+    actors = list_claim_actors()
+    seen = {name.lower(): name for name in actors}
+    for job in rows:
+        jid = str(job.get("id") or "")
+        claims = today.get(jid, [])
+        job["claims"] = claims
+        names = list(actors)
+        for claim in claims:
+            actor = str(claim.get("actor") or "").strip()
+            if actor and actor.lower() not in seen:
+                seen[actor.lower()] = actor
+                names.append(actor)
+        claimed = {str(c.get("actor") or "").strip().lower(): c for c in claims}
+        states = []
+        for actor in names:
+            claim = claimed.get(actor.lower())
+            states.append(
+                {
+                    "actor": actor,
+                    "state": user_state_label(claim.get("status") if claim else None),
+                    "updated_at": claim.get("updated_at") if claim else None,
+                }
+            )
+        job["user_states"] = states
+    return rows
 
 
 def _actor(
@@ -37,7 +87,7 @@ def jobs(
     offset: int = Query(default=0, ge=0),
     new_only: bool = Query(default=True),
 ):
-    rows = list_jobs(status=status, limit=limit, offset=offset, new_only=new_only)
+    rows = attach_user_states(list_jobs(status=status, limit=limit, offset=offset, new_only=new_only))
     total = count_jobs(status=status, new_only=new_only)
     return {"jobs": rows, "total": total}
 

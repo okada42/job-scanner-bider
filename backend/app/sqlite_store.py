@@ -710,3 +710,42 @@ def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
     for job in out:
         job["claim_status"] = "SKIPPED"
     return out
+
+
+def list_claim_actors() -> list[str]:
+    conn = connect()
+    rows = conn.execute(
+        """select distinct actor from bider_claims
+           where actor is not null and trim(actor) != ''
+           order by actor collate nocase"""
+    ).fetchall()
+    return [str(r["actor"]).strip() for r in rows if str(r["actor"] or "").strip()]
+
+
+def claims_for_jobs(job_ids: list[str]) -> dict[str, list[dict]]:
+    ids = [str(jid) for jid in job_ids if jid]
+    if not ids:
+        return {}
+    conn = connect()
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"""select job_id, actor, status, updated_at, day from bider_claims
+            where day = ? and job_id in ({placeholders})
+            order by actor collate nocase""",
+        (claim_day(), *ids),
+    ).fetchall()
+    out: dict[str, list[dict]] = {}
+    for row in rows:
+        actor = str(row["actor"] or "").strip()
+        jid = str(row["job_id"] or "")
+        if not actor or not jid:
+            continue
+        out.setdefault(jid, []).append(
+            {
+                "actor": actor,
+                "status": row["status"],
+                "updated_at": row["updated_at"],
+                "day": row["day"],
+            }
+        )
+    return out

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
-import { api, fetchBiderQueue, fetchJobsPage, getToken, setToken } from "./api";
+import { api, fetchJobsPage, getToken, setToken } from "./api";
 import { AddSourceForm } from "./components/AddSourceForm";
 import { BadClients } from "./components/BadClients";
 import { HeaderBar } from "./components/HeaderBar";
@@ -24,10 +24,7 @@ export default function App() {
     const slow = setTimeout(() => dispatch({ type: "updating", updating: true }), 350);
     try {
       const offset = (Math.max(1, page) - 1) * pageSize;
-      const [{ jobs, total }, queue] = await Promise.all([
-        fetchJobsPage({ limit: pageSize, offset }),
-        fetchBiderQueue(),
-      ]);
+      const { jobs, total } = await fetchJobsPage({ limit: pageSize, offset });
       const pageCount = Math.max(1, Math.ceil((total || 0) / pageSize));
       if (page > pageCount) {
         dispatch({ type: "page", page: pageCount });
@@ -36,7 +33,6 @@ export default function App() {
       } else {
         dispatch({ type: "jobs", jobs, total });
       }
-      dispatch({ type: "biderQueue", current: queue.current, queued: queue.queued, active: queue.active });
     } finally {
       clearTimeout(slow);
       dispatch({ type: "updating", updating: false });
@@ -238,14 +234,7 @@ export default function App() {
       {state.error && <p className="err">{state.error}</p>}
 
       <section className="split top-split">
-        <QueuePanel
-          current={state.current}
-          active={state.active}
-          queued={state.queued}
-          bider={state.bider}
-          onMode={onBiderMode}
-          onMaxActive={onBiderMax}
-        />
+        <QueuePanel bider={state.bider} onMode={onBiderMode} onMaxActive={onBiderMax} />
         <JobsPanel
           jobs={state.jobs}
           total={state.jobsTotal}
