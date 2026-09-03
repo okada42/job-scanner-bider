@@ -22,6 +22,7 @@ export default function App() {
     keywords: "",
   });
   const [reportingJobId, setReportingJobId] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const authed = Boolean(token);
 
@@ -38,7 +39,11 @@ export default function App() {
     if (!authed) return;
     refresh().catch((e) => setError(e.message));
     const t = setInterval(() => refresh().catch(() => {}), 5000);
-    return () => clearInterval(t);
+    const clock = setInterval(() => setNow(Date.now()), 1000);
+    return () => {
+      clearInterval(t);
+      clearInterval(clock);
+    };
   }, [authed]);
 
   async function reportBadClient(job) {
@@ -363,7 +368,7 @@ export default function App() {
               </label>
             </div>
           )}
-          <Queue jobs={jobs} />
+          <Queue jobs={jobs} now={now} />
         </article>
         <article className="card grow">
           <h2>Jobs</h2>
@@ -389,7 +394,8 @@ export default function App() {
                 jobs.map((j) => (
                 <tr key={j.id}>
                   <td>
-                    <span className={`pill ${j.status === "QUEUED" ? "on" : ""}`}>{j.status}</span>
+                    <span className={`pill ${statusPillClass(j.status)}`}>{j.status}</span>
+                    {statusAgeLabel(j, now) && <div className="muted status-age">{statusAgeLabel(j, now)}</div>}
                   </td>
                   <td>{LABELS[j.platform] || j.platform}</td>
                   <td>
@@ -425,17 +431,23 @@ export default function App() {
   );
 }
 
-function Queue({ jobs }) {
+function Queue({ jobs, now }) {
   const queued = useMemo(
     () => jobs.filter((j) => ["QUEUED", "SENT_TO_BIDER", "PROCESSING", "WAITING_FOR_USER"].includes(j.status)),
     [jobs]
   );
   const current = queued.find((j) => j.status !== "QUEUED");
   const rest = queued.filter((j) => j.status === "QUEUED");
+  const age = current ? statusAgeLabel(current, now) : null;
   return (
     <div>
       <h3>CURRENT</h3>
-      <p>{current ? `${current.platform} ${current.budget || ""} — ${current.title || current.url}` : "None"}</p>
+      <p>
+        {current
+          ? `${current.platform} ${current.budget || ""} — ${current.title || current.url}`
+          : "None"}
+      </p>
+      {age && <p className="muted status-age">{current.status} {age}</p>}
       <h3>QUEUE</h3>
       <ol>
         {rest.slice(0, 8).map((j) => (
@@ -446,6 +458,36 @@ function Queue({ jobs }) {
       </ol>
     </div>
   );
+}
+
+const AGE_STATUSES = new Set(["PROCESSING", "COMPLETED", "SENT_TO_BIDER", "WAITING_FOR_USER"]);
+
+function statusPillClass(status) {
+  if (status === "QUEUED") return "on";
+  if (status === "PROCESSING" || status === "SENT_TO_BIDER" || status === "WAITING_FOR_USER") return "progress";
+  if (status === "COMPLETED") return "done";
+  return "";
+}
+
+function formatDuration(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function statusAgeLabel(job, now = Date.now()) {
+  if (!AGE_STATUSES.has(job?.status)) return null;
+  const raw = job.status_at || job.updated_at;
+  if (!raw) return null;
+  const started = Date.parse(raw);
+  if (!Number.isFinite(started)) return null;
+  const dur = formatDuration(now - started);
+  if (job.status === "COMPLETED") return `${dur} ago`;
+  return `for ${dur}`;
 }
 
 function uniqueClientNames(names) {

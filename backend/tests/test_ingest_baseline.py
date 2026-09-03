@@ -313,3 +313,20 @@ def test_crowdworks_search_links_without_ids_are_ignored():
     </html>
     """
     assert CrowdWorksAdapter().parse_listing(html, "https://crowdworks.jp/public/jobs/search") == []
+
+
+def test_list_jobs_includes_status_at_for_processing(db):
+    job = sqlite_store.insert_job(
+        {
+            "platform": "crowdworks",
+            "external_job_id": "status-age-1",
+            "url": "https://crowdworks.jp/public/jobs/status-age-1",
+            "title": "timer job",
+            "status": "PROCESSING",
+        }
+    )
+    sqlite_store.add_event(job["id"], "PROCESSING")
+    listed = sqlite_store.list_jobs(new_only=False)
+    row = next(j for j in listed if j["id"] == job["id"])
+    assert row["status"] == "PROCESSING"
+    assert row["status_at"]

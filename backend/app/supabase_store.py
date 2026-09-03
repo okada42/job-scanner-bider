@@ -195,9 +195,41 @@ def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = Fals
                 start += page
             if baseline_ids:
                 q = q.not_.in_("id", baseline_ids)
-        return q.limit(limit).execute().data or []
+        jobs = q.limit(limit).execute().data or []
+        return _attach_status_at(sb, jobs)
     except Exception:
         return []
+
+
+def _attach_status_at(sb, jobs: list[dict]) -> list[dict]:
+    ids = [str(j.get("id")) for j in jobs if j.get("id")]
+    if not ids:
+        return jobs
+    latest: dict[tuple[str, str], str] = {}
+    start = 0
+    page = 1000
+    while True:
+        ev = (
+            sb.table("job_events")
+            .select("job_id,event,timestamp")
+            .in_("job_id", ids)
+            .range(start, start + page - 1)
+            .execute()
+        )
+        rows = ev.data or []
+        for row in rows:
+            key = (str(row.get("job_id")), str(row.get("event")))
+            ts = row.get("timestamp")
+            if not ts:
+                continue
+            if key not in latest or str(ts) > str(latest[key]):
+                latest[key] = ts
+        if len(rows) < page:
+            break
+        start += page
+    for job in jobs:
+        job["status_at"] = latest.get((str(job.get("id")), str(job.get("status")))) or job.get("updated_at")
+    return jobs
 
 
 def get_job(job_id: str) -> dict | None:

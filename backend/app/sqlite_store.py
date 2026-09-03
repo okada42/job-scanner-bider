@@ -224,6 +224,7 @@ def _job_row(row: sqlite3.Row) -> dict:
         "source_id": row["source_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "status_at": row["status_at"] if "status_at" in row.keys() and row["status_at"] else row["updated_at"],
     }
 
 
@@ -409,14 +410,17 @@ def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = Fals
         extra = """and not exists (
             select 1 from job_events e where e.job_id = jobs.id and e.event = 'BASELINE'
         )"""
+    status_at = """(select e.timestamp from job_events e
+                    where e.job_id = jobs.id and e.event = jobs.status
+                    order by e.timestamp desc limit 1)"""
     if status:
         rows = conn.execute(
-            f"select * from jobs where status = ? {extra} order by detected_at desc limit ?",
+            f"select jobs.*, {status_at} as status_at from jobs where status = ? {extra} order by detected_at desc limit ?",
             (status, int(limit)),
         ).fetchall()
     else:
         rows = conn.execute(
-            f"select * from jobs where 1=1 {extra} order by detected_at desc limit ?",
+            f"select jobs.*, {status_at} as status_at from jobs where 1=1 {extra} order by detected_at desc limit ?",
             (int(limit),),
         ).fetchall()
     return [_job_row(r) for r in rows]
