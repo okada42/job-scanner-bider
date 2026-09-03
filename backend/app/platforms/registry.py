@@ -74,6 +74,15 @@ def _cw_budget(payment: object) -> str | None:
     return parts[-1]
 
 
+def _cw_is_hourly(payment: object) -> bool:
+    if not isinstance(payment, dict):
+        return False
+    hourly = payment.get("hourly_payment")
+    if isinstance(hourly, dict) and any(hourly.get(k) for k in ("min_hourly_wage", "max_hourly_wage", "min_budget", "max_budget")):
+        return True
+    return bool(hourly) and not (payment.get("fixed_price_payment"))
+
+
 class CrowdWorksAdapter(PlatformAdapter):
     name = "crowdworks"
     hosts = ("crowdworks.jp", "www.crowdworks.jp")
@@ -178,13 +187,14 @@ class CrowdWorksAdapter(PlatformAdapter):
                 kind = "discuss"
             category_id = offer.get("category_id")
             _, tag = crowdworks_category(category_id, page_url)
+            payment = wrap.get("payment") or offer.get("payment")
             jobs[jid] = ExtractedJob(
                 platform=self.name,
                 external_job_id=jid,
                 url=f"https://crowdworks.jp/public/jobs/{jid}",
                 title=offer.get("title"),
                 client=client.get("username") or client.get("name"),
-                budget=_cw_budget(wrap.get("payment") or offer.get("payment")),
+                budget=_cw_budget(payment),
                 deadline=str(offer.get("expired_on") or offer.get("deadline") or "") or None,
                 category=str(category_id) if category_id else tag,
                 extra={
@@ -193,6 +203,7 @@ class CrowdWorksAdapter(PlatformAdapter):
                     "login_required": bool(offer.get("is_login_required")),
                     "verified": bool(client.get("is_employer_certification")),
                     "is_employer_certification": bool(client.get("is_employer_certification")),
+                    "hourly": _cw_is_hourly(payment),
                     "job_kind": kind,
                     "tag": tag,
                 },

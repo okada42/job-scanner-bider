@@ -289,6 +289,7 @@ def test_crowdworks_vue_container_listings():
     assert adapter.last_meta.get("total_entries") == 8126
     assert adapter.last_meta.get("parsed") == 1
     assert jobs[0].extra.get("verified") is True
+    assert jobs[0].extra.get("hourly") is False
 
 
 def test_crowdworks_search_links_without_ids_are_ignored():

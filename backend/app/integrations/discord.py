@@ -95,6 +95,21 @@ def _verification(job: dict, extra: dict) -> str:
     return "Verification —"
 
 
+def is_hourly_job(job: dict, extra: dict | None = None) -> bool:
+    extra = extra if isinstance(extra, dict) else {}
+    if extra.get("hourly") is True or job.get("hourly") is True:
+        return True
+    kind = str(extra.get("payment_type") or job.get("payment_type") or "").lower()
+    if kind in {"hourly", "時給", "時間単価"}:
+        return True
+    hay = " ".join(
+        str(part)
+        for part in (job.get("budget"), job.get("title"), extra.get("tag"))
+        if part
+    )
+    return bool(re.search(r"時給|時間単価|/時|\bhourly\b", hay, re.I))
+
+
 def _kind(job: dict) -> str:
     kind = (job.get("job_kind") or "").strip().lower()
     if kind in {"contest", "competition", "コンペ"}:
@@ -144,18 +159,30 @@ def build_new_job_payload(job: dict) -> dict:
 
     lock = "🔒" if job.get("login_required") or extra.get("login_required") else "🆓"
     bits = [f"Judgment ✅可 🛡️ {lock}"]
+    if is_hourly_job(job, extra):
+        bits.append("Hourly 時給")
     remain = remaining_label(job.get("deadline"))
     if remain:
         bits.append(f"⏱ {remain}")
-    bits.append(f"💰 {_yen(job.get('budget'))}")
+    money = _yen(job.get("budget"))
+    if is_hourly_job(job, extra) and money != "—":
+        bits.append(f"💰 時給 {money}")
+    else:
+        bits.append(f"💰 {money}")
     judgment = " · ".join(bits)
 
-    lines = [
-        f"{style['dot']} {_kind(job)} · {client}",
-        _verification(job, extra),
-        "",
-        judgment,
-    ]
+    lines = []
+    if url:
+        # Fenced block gets Discord's one-click copy control, directly under the title.
+        lines.extend([f"```\n{url}\n```", ""])
+    lines.extend(
+        [
+            f"{style['dot']} {_kind(job)} · {client}",
+            _verification(job, extra),
+            "",
+            judgment,
+        ]
+    )
     body = "\n".join(lines).strip()
 
     embed = {
@@ -164,11 +191,13 @@ def build_new_job_payload(job: dict) -> dict:
         "color": style["color"],
         "footer": {"text": style["footer"]},
     }
-    payload = {"embeds": [embed]}
     if url:
-        # Plain URL once, as message text, so it is visible and one-click copyable.
-        payload["content"] = url
-    return payload
+        embed["url"] = url
+    return {
+        "content": "@here",
+        "allowed_mentions": {"parse": ["everyone"]},
+        "embeds": [embed],
+    }
 
 
 async def notify_new_job(job: dict) -> bool:

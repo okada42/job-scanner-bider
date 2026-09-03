@@ -1,7 +1,7 @@
-from app.integrations.discord import build_new_job_payload, job_post_url
+from app.integrations.discord import build_new_job_payload, is_hourly_job, job_post_url
 
 
-def test_crowdworks_embed_is_blue_without_duplicate_url_or_description():
+def test_crowdworks_embed_clickable_title_copyable_url_and_here():
     payload = build_new_job_payload(
         {
             "platform": "crowdworks",
@@ -18,17 +18,19 @@ def test_crowdworks_embed_is_blue_without_duplicate_url_or_description():
         }
     )
     embed = payload["embeds"][0]
+    assert payload["content"] == "@here"
+    assert payload["allowed_mentions"] == {"parse": ["everyone"]}
+    assert embed["url"] == "https://crowdworks.jp/public/jobs/13424135"
     assert embed["color"] == 0x1E88E5
     assert embed["title"].startswith("🔔[Crowdworks_Web]")
     assert "(image)" in embed["title"]
-    assert payload["content"] == "https://crowdworks.jp/public/jobs/13424135"
-    assert "https://crowdworks.jp/public/jobs/13424135" not in embed["description"]
-    assert "fields" not in embed
-    assert "url" not in embed
+    assert embed["description"].startswith("```\nhttps://crowdworks.jp/public/jobs/13424135\n```")
+    assert embed["description"].count("https://crowdworks.jp/public/jobs/13424135") == 1
     assert "🔵 discuss · PTK53" in embed["description"]
     assert "Verification ❌未認定" in embed["description"]
     assert "Judgment ✅可" in embed["description"]
     assert "💰 ¥5,000" in embed["description"]
+    assert "Hourly" not in embed["description"]
     assert "Create 21 gray background" not in embed["description"]
     assert embed["footer"]["text"] == "CrowdWorks New Job Notification"
 
@@ -42,7 +44,7 @@ def test_lancers_blue_and_coconala_yellow():
             "budget": "20000円",
             "url": "https://www.lancers.jp/work/detail/1",
         }
-    )["embeds"][0]
+    )
     coco = build_new_job_payload(
         {
             "platform": "coconala",
@@ -52,16 +54,30 @@ def test_lancers_blue_and_coconala_yellow():
             "url": "https://coconala.com/requests/1",
             "extra": {"verified": True},
         }
+    )
+    assert lancers["content"] == "@here"
+    assert lancers["embeds"][0]["color"] == 0x1E88E5
+    assert lancers["embeds"][0]["url"] == "https://www.lancers.jp/work/detail/1"
+    assert "🔵" in lancers["embeds"][0]["description"]
+    assert coco["embeds"][0]["color"] == 0xFDD835
+    assert "🟡" in coco["embeds"][0]["description"]
+    assert "Verification ✅認定" in coco["embeds"][0]["description"]
+
+
+def test_hourly_job_is_marked():
+    embed = build_new_job_payload(
+        {
+            "platform": "crowdworks",
+            "title": "データ入力",
+            "client": "Acme",
+            "budget": "1,500円",
+            "url": "https://crowdworks.jp/public/jobs/9",
+            "extra": {"hourly": True},
+        }
     )["embeds"][0]
-    assert lancers["color"] == 0x1E88E5
-    assert lancers["title"].startswith("🔔[Lancers]")
-    assert "🔵" in lancers["description"]
-    assert "Verification —" in lancers["description"]
-    assert lancers["footer"]["text"] == "Lancers New Job Notification"
-    assert coco["color"] == 0xFDD835
-    assert coco["title"].startswith("🔔[Coconala]")
-    assert "🟡" in coco["description"]
-    assert "Verification ✅認定" in coco["description"]
+    assert "Hourly 時給" in embed["description"]
+    assert "💰 時給 ¥1,500" in embed["description"]
+    assert is_hourly_job({"title": "【時給】ライター"}, {}) is True
 
 
 def test_job_post_url_is_canonical_without_query():
