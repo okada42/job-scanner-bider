@@ -9,7 +9,7 @@ _AGE_STATUSES = ("PROCESSING", "COMPLETED", "SENT_TO_BIDER", "WAITING_FOR_USER")
 _ACTIVE_STATUSES = ("SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER")
 _BASELINE_TTL_SEC = 45.0
 _baseline_lock = threading.Lock()
-_baseline_cache: tuple[float, list[str]] | None = None
+_baseline_cache: tuple[float, set[str]] | None = None
 
 DEFAULT_CONTROL = {
     "id": 1,
@@ -48,13 +48,13 @@ def _invalidate_baseline_ids() -> None:
         _baseline_cache = None
 
 
-def _baseline_job_ids(sb) -> list[str]:
+def _baseline_job_ids(sb) -> set[str]:
     global _baseline_cache
     now = time.monotonic()
     with _baseline_lock:
         if _baseline_cache and (now - _baseline_cache[0]) < _BASELINE_TTL_SEC:
             return _baseline_cache[1]
-    ids: list[str] = []
+    ids: set[str] = set()
     start = 0
     page = 1000
     while True:
@@ -66,7 +66,7 @@ def _baseline_job_ids(sb) -> list[str]:
             .execute()
         )
         rows = ev.data or []
-        ids.extend(str(row["job_id"]) for row in rows if row.get("job_id"))
+        ids.update(str(row["job_id"]) for row in rows if row.get("job_id"))
         if len(rows) < page:
             break
         start += page
@@ -75,14 +75,10 @@ def _baseline_job_ids(sb) -> list[str]:
     return ids
 
 
-def _jobs_query(sb, status: str | None, new_only: bool, count: bool = False):
+def _jobs_query(sb, status: str | None, count: bool = False):
     q = sb.table("jobs").select("id", count="exact") if count else sb.table("jobs").select("*")
     if status:
         q = q.eq("status", status)
-    if new_only:
-        baseline_ids = _baseline_job_ids(sb)
-        if baseline_ids:
-            q = q.not_.in_("id", baseline_ids)
     return q
 
 
@@ -227,9 +223,31 @@ def delete_source(source_id: str) -> None:
 def count_jobs(status: str | None = None, new_only: bool = False) -> int:
     try:
         sb = supabase()
-        q = _jobs_query(sb, status, new_only, count=True)
-        res = q.limit(1).execute()
-        return int(res.count or 0)
+        res = _jobs_query(sb, status, count=True).limit(1).execute()
+        total = int(res.count or 0)
+        if not new_only:
+            return total
+        baseline = set(_baseline_job_ids(sb))
+        if not status:
+            return max(0, total - len(baseline))
+        counted = 0
+        start = 0
+        page = 1000
+        while True:
+            rows = (
+                sb.table("jobs")
+                .select("id")
+                .eq("status", status)
+                .range(start, start + page - 1)
+                .execute()
+                .data
+                or []
+            )
+            counted += sum(1 for row in rows if str(row.get("id") or "") not in baseline)
+            if len(rows) < page:
+                break
+            start += page
+        return counted
     except Exception:
         return 0
 
@@ -237,11 +255,31 @@ def count_jobs(status: str | None = None, new_only: bool = False) -> int:
 def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = False, offset: int = 0) -> list[dict]:
     try:
         sb = supabase()
+        baseline = _baseline_job_ids(sb) if new_only else set()
         off = max(0, int(offset))
         lim = max(1, int(limit))
-        q = _jobs_query(sb, status, new_only).order("detected_at", desc=True)
-        jobs = q.range(off, off + lim - 1).execute().data or []
-        return _attach_status_at(sb, jobs)
+        skip = off
+        collected: list[dict] = []
+        start = 0
+        page = 100
+        while len(collected) < lim:
+            q = _jobs_query(sb, status).order("detected_at", desc=True)
+            batch = q.range(start, start + page - 1).execute().data or []
+            if not batch:
+                break
+            for job in batch:
+                if baseline and str(job.get("id") or "") in baseline:
+                    continue
+                if skip > 0:
+                    skip -= 1
+                    continue
+                collected.append(job)
+                if len(collected) >= lim:
+                    break
+            if len(batch) < page:
+                break
+            start += page
+        return _attach_status_at(sb, collected)
     except Exception:
         return []
 
