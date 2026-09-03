@@ -8,18 +8,21 @@
       h1 { font-size: 14px; margin: 0 0 6px; letter-spacing: 0.12em; color: #e8b86d; }
       .body { padding: 14px 16px; }
       .meta { color: #9aa6b8; margin: 6px 0; }
+      .warn { color: #f0c987; }
       button { margin-right: 6px; margin-top: 12px; padding: 8px 10px; }
       pre { white-space: pre-wrap; font-size: 12px; color: #c9d3e2; }
       h3 { margin: 16px 0 6px; font-size: 11px; letter-spacing: 0.08em; color: #e8b86d; }
       .job { padding: 8px 0; border-bottom: 1px solid #2a3344; }
       .job a { color: #e8b86d; }
       #jobs { max-height: 280px; overflow: auto; }
+      a.link { color: #e8b86d; cursor: pointer; }
     </style>
   </head>
   <body>
     <header>
       <h1>JOB BIDER</h1>
       <div id="title">No active job</div>
+      <div class="meta" id="biderStatus"></div>
     </header>
     <div class="body">
       <div class="meta" id="budget"></div>
@@ -28,6 +31,7 @@
       <button id="prepare">Prepare page</button>
       <button id="skip">SKIP</button>
       <button id="next">NEXT</button>
+      <button id="options">Options</button>
       <h3>Description</h3>
       <pre id="desc"></pre>
       <h3>FROM DATABASE</h3>

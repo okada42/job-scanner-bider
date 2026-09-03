@@ -83,13 +83,17 @@ Use **two Chrome profiles**, same unpacked extension, opposite toggles.
 | **Search** | ON | OFF | Stay logged in on CrowdWorks / Lancers / Coconala. The extension `fetch`es listing URLs with this profile’s cookies (does not navigate your tabs) and POSTs jobs to `/api/jobs/ingest`. |
 | **Apply** | OFF | ON | Opens queued jobs from the shared Railway queue and prepares the proposal page. Does not scan. Never submits. |
 
-Defaults: both toggles **off**. Turn them on per profile after you set Backend URL + token.
+Defaults: both toggles **off**. The default Backend URL is the production Railway API. Turn the toggles on per profile after you paste the token.
 
-1. Open `chrome://extensions` → enable Developer mode → **Load unpacked** → select `extension/`.
-2. Open the extension options and set:
-   - Backend URL: Railway public URL (`https`, no trailing slash) — or `http://127.0.0.1:8000` for local backend
-   - Token: the same `API_TOKEN` as the backend
+1. `git pull` this repo on the machine that runs Chrome (this cloud workspace is not your Chrome).
+2. Open `chrome://extensions` → enable Developer mode → **Load unpacked** → select the `extension/` folder (the one that contains `manifest.json`). After an update, click **Reload**.
+3. Open **Options** (side panel **Options** button, or right-click the extension):
+   - Backend URL: `https://job-scanner-bider-production.up.railway.app` (no trailing slash). Do **not** paste the Netlify dashboard URL. Use `http://127.0.0.1:8000` only if FastAPI is running on that same computer.
+   - Token: the same `API_TOKEN` as the dashboard
+   - Click **Test connection** — success means FROM DATABASE and NEXT can reach Railway
    - The two toggles as in the table above
+
+**FROM DATABASE: Failed to fetch** means Chrome never reached the API (usually leftover `127.0.0.1:8000` or the Netlify site). It is not an empty database. After reload, the extension remaps those URLs to Railway and shows the real error (missing token, 401, or no queued job).
 
 The search profile **must stay logged in**. Railway’s HTML GET is anonymous; if the search session expires, ingest will see login pages and find no jobs.
 

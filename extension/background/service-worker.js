@@ -1,7 +1,8 @@
+importScripts("../shared/backend.js");
 importScripts("listing-parse.js");
 
 const DEFAULTS = {
-  backendUrl: "http://127.0.0.1:8000",
+  backendUrl: PRODUCTION_API,
   token: "",
   running: false,
   applyEnabled: false,
@@ -18,6 +19,7 @@ async function cfg() {
   const stored = await chrome.storage.sync.get(DEFAULTS);
   const merged = { ...DEFAULTS, ...stored };
   merged.applyEnabled = Boolean(merged.applyEnabled || merged.running);
+  merged.backendUrl = normalizeBackendUrl(merged.backendUrl);
   return merged;
 }
 
@@ -55,18 +57,82 @@ function disconnectWs() {
   }
 }
 
+async function fetchApi(base, path, options, token) {
+  const url = `${base}${path}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Token": token,
+        ...(options.headers || {}),
+      },
+    });
+  } catch (err) {
+    throw new Error(describeFetchError(err, base));
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error("Invalid API token (401). Use the same token as the dashboard.");
+    }
+    throw new Error((text || `HTTP ${res.status}`).slice(0, 280));
+  }
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    throw new Error(
+      `Got a webpage instead of the API from ${base}. Set Backend URL to ${PRODUCTION_API}, not the Netlify dashboard.`
+    );
+  }
+}
+
 async function api(path, options = {}) {
   const c = await cfg();
-  const res = await fetch(c.backendUrl + path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Token": c.token,
-      ...(options.headers || {}),
-    },
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  if (!c.token) {
+    throw new Error(
+      "API token is empty. Right-click the extension → Options and paste the same token as the dashboard."
+    );
+  }
+  const base = c.backendUrl;
+  try {
+    return await fetchApi(base, path, options, c.token);
+  } catch (err) {
+    if (!isLocalhostBackend(base)) throw err;
+    try {
+      const data = await fetchApi(PRODUCTION_API, path, options, c.token);
+      await chrome.storage.sync.set({ backendUrl: PRODUCTION_API });
+      disconnectWs();
+      connect();
+      return data;
+    } catch (_) {
+      throw err;
+    }
+  }
+}
+
+async function migrateLocalhostIfUnreachable() {
+  const stored = await chrome.storage.sync.get({ backendUrl: DEFAULTS.backendUrl });
+  const url = normalizeBackendUrl(stored.backendUrl);
+  if (!isLocalhostBackend(url)) return;
+  try {
+    const res = await fetch(`${url}/api/health`);
+    if (res.ok) return;
+  } catch (_) {
+    /* local API is down */
+  }
+  try {
+    const res = await fetch(`${PRODUCTION_API}/api/health`);
+    if (res.ok) {
+      await chrome.storage.sync.set({ backendUrl: PRODUCTION_API });
+      disconnectWs();
+      connect();
+    }
+  } catch (_) {
+    /* keep saved URL */
+  }
 }
 
 async function maybeOpen(job) {
@@ -84,9 +150,23 @@ async function maybeOpen(job) {
 
 async function claimAndOpen() {
   const c = await cfg();
-  if (!c.applyEnabled || c.paused) return;
+  if (!c.applyEnabled) {
+    return { ok: false, error: "Enable apply (Bider) in the popup first." };
+  }
+  if (c.paused) {
+    return { ok: false, error: "Bider is paused. Click Resume in the popup." };
+  }
   const data = await api("/api/jobs/next");
-  if (data.job) await maybeOpen(data.job);
+  if (!data.job) {
+    return {
+      ok: true,
+      job: null,
+      error:
+        "No queued job. On the dashboard, turn Bider ON (not paused) and wait for a new match to enter the queue.",
+    };
+  }
+  await maybeOpen(data.job);
+  return { ok: true, job: data.job };
 }
 
 async function setApplyEnabled(enabled) {
@@ -95,10 +175,10 @@ async function setApplyEnabled(enabled) {
   await chrome.storage.sync.set(patch);
   if (enabled) {
     await connect();
-    await claimAndOpen();
-  } else {
-    disconnectWs();
+    return claimAndOpen();
   }
+  disconnectWs();
+  return { ok: true };
 }
 
 async function scheduleScanAlarm() {
@@ -170,13 +250,55 @@ async function runListingScan() {
   }
 }
 
+async function testConnection() {
+  const c = await cfg();
+  const base = c.backendUrl;
+  try {
+    const res = await fetch(`${base}/api/health`);
+    if (!res.ok) throw new Error(`Health check HTTP ${res.status}`);
+    await res.json();
+  } catch (err) {
+    if (isLocalhostBackend(base)) {
+      try {
+        const res = await fetch(`${PRODUCTION_API}/api/health`);
+        if (res.ok) {
+          await chrome.storage.sync.set({ backendUrl: PRODUCTION_API });
+          return testConnection();
+        }
+      } catch (_) {
+        /* fall through */
+      }
+    }
+    return { ok: false, error: describeFetchError(err, base), backendUrl: base };
+  }
+  if (!c.token) {
+    return {
+      ok: false,
+      error: "API is reachable, but the token is empty. Paste the same token as the dashboard.",
+      backendUrl: base,
+    };
+  }
+  try {
+    const jobs = await api("/api/jobs?limit=1&new_only=true");
+    return {
+      ok: true,
+      backendUrl: (await cfg()).backendUrl,
+      jobs: Array.isArray(jobs) ? jobs.length : 0,
+    };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message ? err.message : err), backendUrl: base };
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   chrome.alarms.create(BIDER_ALARM, { periodInMinutes: 1 });
+  migrateLocalhostIfUnreachable();
   scheduleScanAlarm();
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  migrateLocalhostIfUnreachable();
   scheduleScanAlarm();
   connect();
 });
@@ -189,23 +311,32 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     if (msg.type === "START") {
-      await setApplyEnabled(true);
-      sendResponse({ ok: true });
+      try {
+        const result = await setApplyEnabled(true);
+        sendResponse({ ok: Boolean(result?.ok !== false), ...result });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
     } else if (msg.type === "SET_APPLY") {
-      await setApplyEnabled(Boolean(msg.enabled));
-      sendResponse({ ok: true });
+      try {
+        const result = await setApplyEnabled(Boolean(msg.enabled));
+        sendResponse({ ok: Boolean(result?.ok !== false), ...result });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
+      }
     } else if (msg.type === "SET_SCAN") {
       await chrome.storage.sync.set({ scanEnabled: Boolean(msg.enabled) });
       await scheduleScanAlarm();
       if (msg.enabled) await runListingScan();
       sendResponse({ ok: true });
     } else if (msg.type === "CONFIG_CHANGED") {
+      await migrateLocalhostIfUnreachable();
       await scheduleScanAlarm();
       const c = await cfg();
       if (c.scanEnabled) await runListingScan();
       if (c.applyEnabled && !c.paused) await connect();
       else disconnectWs();
-      sendResponse({ ok: true });
+      sendResponse({ ok: true, backendUrl: c.backendUrl });
     } else if (msg.type === "PAUSE") {
       await chrome.storage.sync.set({ paused: true });
       sendResponse({ ok: true });
@@ -214,39 +345,59 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await connect();
       sendResponse({ ok: true });
     } else if (msg.type === "SKIP" || msg.type === "NEXT") {
-      const c = await cfg();
-      if (c.currentJob) {
-        await api(`/api/jobs/${c.currentJob.id}/status`, {
-          method: "POST",
-          body: JSON.stringify({ status: msg.type === "SKIP" ? "SKIPPED" : "COMPLETED" }),
-        });
+      try {
+        const c = await cfg();
+        if (c.currentJob) {
+          await api(`/api/jobs/${c.currentJob.id}/status`, {
+            method: "POST",
+            body: JSON.stringify({ status: msg.type === "SKIP" ? "SKIPPED" : "COMPLETED" }),
+          });
+        }
+        await chrome.storage.sync.set({ currentJob: null });
+        const result = await claimAndOpen();
+        sendResponse({ ok: Boolean(result.ok), ...result });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
-      await chrome.storage.sync.set({ currentJob: null });
-      await claimAndOpen();
-      sendResponse({ ok: true });
     } else if (msg.type === "PREPARE_TAB") {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) {
-        sendResponse({ ok: false });
+        sendResponse({ ok: false, error: "No active tab." });
         return;
       }
-      chrome.tabs.sendMessage(tab.id, { type: "PREPARE" }, sendResponse);
+      chrome.tabs.sendMessage(tab.id, { type: "PREPARE" }, (res) => {
+        if (chrome.runtime.lastError) {
+          sendResponse({
+            ok: false,
+            error: "Open a CrowdWorks, Lancers, or Coconala job page first.",
+          });
+          return;
+        }
+        sendResponse(res || { ok: false, error: "Prepare did not run on this page." });
+      });
       return;
     } else if (msg.type === "LIST_JOBS") {
       try {
         const jobs = await api("/api/jobs?limit=25&new_only=true");
-        sendResponse({ ok: true, jobs: Array.isArray(jobs) ? jobs : [] });
+        sendResponse({ ok: true, jobs: Array.isArray(jobs) ? jobs : [], backendUrl: (await cfg()).backendUrl });
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err), jobs: [] });
       }
+    } else if (msg.type === "TEST_CONNECTION") {
+      sendResponse(await testConnection());
     } else if (msg.type === "GET_STATE") {
       const c = await cfg();
       const local = await chrome.storage.local.get({ scanStatus: null });
-      sendResponse({ ...c, scanStatus: local.scanStatus || null });
+      sendResponse({
+        ...c,
+        hasToken: Boolean(c.token),
+        scanStatus: local.scanStatus || null,
+      });
     }
   })();
   return true;
 });
 
+migrateLocalhostIfUnreachable();
 scheduleScanAlarm();
 connect();
