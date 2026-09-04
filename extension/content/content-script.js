@@ -105,6 +105,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   function reportUser(tries) {
     try {
       if (platform.name === "lancers" && typeof platform.isLoggedOut === "function" && platform.isLoggedOut()) {
+        if (tries > 0) {
+          setTimeout(() => reportUser(tries - 1), 700);
+          return;
+        }
         chrome.runtime.sendMessage({ type: "LANCERS_LOGGED_OUT" });
         return;
       }
