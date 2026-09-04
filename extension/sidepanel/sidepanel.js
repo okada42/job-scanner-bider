@@ -40,7 +40,7 @@ async function paint() {
     const closed = parked.filter((slot) => parkedKind(slot) === "closed");
     document.getElementById("profileLine").textContent = state.profileUser
       ? `Profile · ${state.profileUser}`
-      : "Profile · open CrowdWorks while logged in";
+      : "Profile · open CrowdWorks or Lancers while logged in";
     document.getElementById("statusLine").textContent = state.paused
       ? "Paused"
       : slots.length
@@ -73,9 +73,9 @@ async function paint() {
     } else if (state.paused) {
       status.className = "meta warn";
       status.textContent = "Bider is paused.";
-    } else if (state.loginMissing) {
+    } else if (state.lancersLoggedOut) {
       status.className = "meta warn";
-      status.textContent = "CrowdWorksにログインしてください";
+      status.textContent = "Lancersにログインしてください";
     } else {
       status.className = "meta";
       status.textContent = "Open prepares 応募画面へ, date, and 新しいテンプレートを作成. Never fills 契約金額.";

@@ -24,7 +24,7 @@ async function refresh() {
   document.getElementById("applyEnabled").checked = Boolean(state.applyEnabled);
   document.getElementById("profileLine").textContent = state.profileUser
     ? `Profile · ${state.profileUser}`
-    : "Profile · open CrowdWorks while logged in";
+      : "Profile · open CrowdWorks or Lancers while logged in";
   const el = document.getElementById("status");
   const slots = state.activeSlots || (state.currentJob ? [state.currentJob] : []);
   const parked = state.parkedSlots || [];
@@ -34,6 +34,8 @@ async function refresh() {
   ].join("");
   if (!state.hasToken) {
     el.textContent = "API token is missing. Open Options.";
+  } else if (state.lancersLoggedOut) {
+    el.textContent = "Lancersにログインしてください";
   } else {
     el.textContent = !state.applyEnabled
       ? "Apply stopped"

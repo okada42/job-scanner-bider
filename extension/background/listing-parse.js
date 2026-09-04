@@ -173,8 +173,109 @@ function parseCrowdWorksDetail(html) {
   };
 }
 
+function labeledFromText(text, labels) {
+  const blob = String(text || "");
+  for (const label of labels) {
+    const m = blob.match(new RegExp(`${label}\\s*[:：]?\\s*([^\\n]{1,80})`));
+    if (!m || !m[1]) continue;
+    let value = m[1].replace(/\s+/g, " ").trim();
+    value = value.split(/\s{2,}|(?=予算|掲載|締切|業種|カテゴリ|希望)/)[0].trim();
+    if (value && !labels.some((other) => value.startsWith(other))) return value;
+  }
+  return "";
+}
+
+function definitionValue(html, labels) {
+  const page = String(html || "");
+  for (const label of labels) {
+    const re = new RegExp(
+      `<(?:dt|th)[^>]*>\\s*${label}\\s*</(?:dt|th)>\\s*<(?:dd|td)[^>]*>([\\s\\S]*?)</(?:dd|td)>`,
+      "i"
+    );
+    const m = page.match(re);
+    if (!m) continue;
+    const value = stripTags(m[1]).replace(/\s+/g, " ").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function parseLancersDetail(html) {
+  const page = String(html || "");
+  const text = stripTags(page);
+  const h1 = page.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  const title = h1 ? stripTags(h1[1]).replace(/\s*[-|｜].*$/, "").trim() : "";
+  let details = "";
+  for (const heading of ["依頼概要", "仕事の詳細", "募集内容"]) {
+    const at = page.search(heading);
+    if (at < 0) continue;
+    const slice = page.slice(at, at + 14000);
+    details = stripTags(slice)
+      .replace(new RegExp(`^${heading}\\s*`), "")
+      .trim();
+    if (details.length > 20) break;
+  }
+  const clientRaw =
+    definitionValue(page, ["依頼主", "クライアント"]) || labeledFromText(text, ["依頼主", "クライアント"]);
+  const client =
+    clientRaw && clientRaw.length <= 40 && !/業種|予算|ログイン/.test(clientRaw) ? clientRaw : "";
+  const budget =
+    definitionValue(page, ["提示した予算", "予算", "報酬", "希望金額"]) ||
+    labeledFromText(text, ["提示した予算", "予算", "報酬", "希望金額"]);
+  const postedLabel =
+    definitionValue(page, ["掲載日", "募集開始"]) || labeledFromText(text, ["掲載日", "募集開始"]);
+  const deadline =
+    definitionValue(page, ["締切", "募集期間", "提案期限"]) ||
+    labeledFromText(text, ["締切", "募集期間", "提案期限"]);
+  const dates = globalThis.JobBiderDates;
+  const postedAt = dates && postedLabel ? dates.parseJpDate(postedLabel) : null;
+  return {
+    title,
+    details,
+    description: details,
+    client: client || "—",
+    budget,
+    postedLabel,
+    postedAt,
+    deadline,
+    dueAt: postedAt && dates ? dates.plusOneMonth(postedAt) : null,
+    at: new Date().toISOString(),
+  };
+}
+
+function parseLancersLoggedInUser(html) {
+  const page = String(html || "");
+  const patterns = [
+    /data-user-name=["']([^"']+)["']/i,
+    /class=["'][^"']*(?:c-header__user-name|header-user-name|userName|nickname)[^"']*["'][^>]*>\s*([^<]{1,40})/i,
+    /"nickname"\s*:\s*"([^"\\]{1,40})"/i,
+    /"display_name"\s*:\s*"([^"\\]{1,40})"/i,
+  ];
+  for (const re of patterns) {
+    const m = page.match(re);
+    const name = m && m[1] ? stripTags(m[1]).replace(/さん$/, "").trim() : "";
+    if (name && name.length <= 40 && !/login|sign\s*in|会員登録|ログイン|マイページ/i.test(name)) return name;
+  }
+  return "";
+}
+
+function parseLancersLoggedOut(html) {
+  const page = String(html || "");
+  if (parseLancersLoggedInUser(page)) return false;
+  if (/<title>[^<]*(ログイン|ログイン画面)[^<]*<\/title>/i.test(page)) return true;
+  const header = page.match(/<header[\s\S]{0,12000}<\/header>/i);
+  const blob = header ? header[0] : page.slice(0, 24000);
+  if (/マイページ|ログアウト/.test(blob)) return false;
+  const hasLogin = />\s*ログイン\s*</.test(blob) || /href=["'][^"']*\/(user\/)?login[^"']*["']/i.test(blob);
+  const hasSignup = /会員登録/.test(blob);
+  return hasLogin && hasSignup;
+}
+
 self.parseListingJobs = parseListingJobs;
 self.parseCrowdWorksDetail = parseCrowdWorksDetail;
+self.parseLancersDetail = parseLancersDetail;
+self.parseLancersLoggedInUser = parseLancersLoggedInUser;
+self.parseLancersLoggedOut = parseLancersLoggedOut;
 self.parseLoggedInUser = parseLoggedInUser;
 
 function parseLoggedInUser(html) {

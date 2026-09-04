@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Job Scanner + Bider",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "Scans listings from a logged-in profile and prepares applications. Never submits.",
   "permissions": ["storage", "sidePanel", "tabs", "alarms", "notifications"],
   "host_permissions": [
@@ -31,7 +31,7 @@
     },
     {
       "matches": ["https://www.lancers.jp/*", "https://lancers.jp/*"],
-      "js": ["platforms/lancers/adapter.js", "content/content-script.js"],
+      "js": ["shared/dates.js", "platforms/lancers/adapter.js", "content/content-script.js"],
       "run_at": "document_idle"
     },
     {

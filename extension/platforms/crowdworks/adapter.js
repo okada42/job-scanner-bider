@@ -344,10 +344,6 @@ function isSentPage() {
 }
 
 async function prepare(msg) {
-  const name = extractLoggedInUser();
-  if (!name) {
-    return { ok: false, error: "not_logged_in", stopped: true };
-  }
   const incoming = msg && msg.extract;
   if (isSentPage()) {
     return { ok: true, stage: "sent", stopped: true, extract: incoming || null };
@@ -360,8 +356,10 @@ async function prepare(msg) {
   if (apply) {
     await randomWait();
     apply.click();
-    await sleep(900);
-    if (isProposalPage()) return fillApplication(extract);
+    for (let i = 0; i < 20; i += 1) {
+      await sleep(400);
+      if (isProposalPage()) return fillApplication(extract);
+    }
     return { ok: true, stage: "clicked_apply", extract, description: extract.details, stopped: false };
   }
   return { ok: false, error: "no_apply_or_box", extract, description: extract.details, stopped: true };

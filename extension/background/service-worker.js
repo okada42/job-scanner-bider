@@ -14,6 +14,9 @@ const DEFAULTS = {
 
 const SCAN_ALARM = "listing-scan";
 const BIDER_ALARM = "bider-keepalive";
+const LANCERS_ALARM = "lancers-keepalive";
+const LANCERS_KEEPALIVE_MIN = 20;
+const LANCERS_TAB_URLS = ["https://www.lancers.jp/*", "https://lancers.jp/*"];
 const CHROME_ALARM_FLOOR_MIN = 0.5;
 
 function jobsFromApi(data) {
@@ -33,7 +36,7 @@ async function cfg() {
 async function rememberProfileUser(name) {
   const value = String(name || "").replace(/\s+/g, " ").trim().replace(/さん$/, "");
   if (!value || value.length > 40 || /login|会員|ログイン/i.test(value)) return "";
-  await chrome.storage.local.set({ profileUser: value, loginMissing: false });
+  await chrome.storage.local.set({ profileUser: value });
   registerActor();
   return value;
 }
@@ -185,14 +188,24 @@ async function pingBiderSocket() {
   }
 }
 
-async function loginIsMissing() {
-  const local = await chrome.storage.local.get({ loginMissing: false });
-  return Boolean(local.loginMissing);
+function isLancersJob(job) {
+  const platform = String(job?.platform || "").toLowerCase();
+  const url = String(job?.url || "");
+  return platform === "lancers" || /lancers\.jp/i.test(url);
 }
 
-async function toastCrowdWorks(text) {
+async function lancersIsLoggedOut() {
+  const local = await chrome.storage.local.get({ lancersLoggedOut: false });
+  return Boolean(local.lancersLoggedOut);
+}
+
+async function skipLancersOpen(job) {
+  return isLancersJob(job) && (await lancersIsLoggedOut());
+}
+
+async function toastLancers(text) {
   try {
-    const tabs = await chrome.tabs.query({ url: ["https://crowdworks.jp/*", "https://www.crowdworks.jp/*"] });
+    const tabs = await chrome.tabs.query({ url: LANCERS_TAB_URLS });
     await Promise.all(
       tabs.map((tab) =>
         tab.id
@@ -204,7 +217,7 @@ async function toastCrowdWorks(text) {
     /* no tab */
   }
   try {
-    await chrome.notifications.create({
+    await chrome.notifications.create("lancers-login", {
       type: "basic",
       iconUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
       title: "Job Bider",
@@ -215,17 +228,73 @@ async function toastCrowdWorks(text) {
   }
 }
 
-async function haltForLogin() {
-  const c = await cfg();
-  if (!c.applyEnabled) return;
-  await chrome.storage.local.set({ loginMissing: true });
-  await toastCrowdWorks("CrowdWorksにログインしてください");
+async function setLancersLoggedOut(loggedOut, { toast } = {}) {
+  const prev = await lancersIsLoggedOut();
+  await chrome.storage.local.set({
+    lancersLoggedOut: Boolean(loggedOut),
+    loginMissing: false,
+  });
+  if (loggedOut && toast && !prev) await toastLancers("Lancersにログインしてください");
+}
+
+async function markLancersActivity() {
+  await chrome.storage.local.set({
+    lancersLastActivity: Date.now(),
+    lancersLoggedOut: false,
+    loginMissing: false,
+  });
+}
+
+async function hasRecentLancersActivity() {
+  const local = await chrome.storage.local.get({ lancersLastActivity: 0 });
+  return Date.now() - Number(local.lancersLastActivity || 0) < LANCERS_KEEPALIVE_MIN * 60 * 1000;
+}
+
+function isLancersWorkUrl(url) {
+  return /lancers\.jp/i.test(String(url || "")) && /\/work\/(detail|propose_start)\//.test(String(url || ""));
+}
+
+async function keepLancersSession() {
+  if (await hasRecentLancersActivity()) return;
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: LANCERS_TAB_URLS });
+  } catch (_) {
+    tabs = [];
+  }
+  if (tabs.some((tab) => isLancersWorkUrl(tab.url))) return;
+  const idle = tabs.find((tab) => tab.id && !isLancersWorkUrl(tab.url));
+  if (idle?.id) {
+    try {
+      await chrome.tabs.reload(idle.id);
+    } catch (_) {
+      /* tab gone */
+    }
+    return;
+  }
+  try {
+    const res = await fetch("https://www.lancers.jp/", { credentials: "include", redirect: "follow" });
+    const html = await res.text();
+    if (typeof self.parseLancersLoggedOut === "function" && self.parseLancersLoggedOut(html)) {
+      await setLancersLoggedOut(true, { toast: true });
+    }
+  } catch (_) {
+    /* network */
+  }
+}
+
+function scheduleLancersAlarm() {
+  chrome.alarms.create(LANCERS_ALARM, { periodInMinutes: LANCERS_KEEPALIVE_MIN });
+}
+
+function clearStaleLoginHalt() {
+  chrome.storage.local.set({ loginMissing: false });
 }
 
 async function onJobAlert(job) {
   const settings = await cfg();
   if (!settings.applyEnabled || settings.paused) return;
-  if (await loginIsMissing()) return;
+  if (await skipLancersOpen(job)) return;
   await fillWindow();
   return job;
 }
@@ -233,7 +302,6 @@ async function onJobAlert(job) {
 async function topUpIfNeeded() {
   const settings = await cfg();
   if (!settings.applyEnabled || settings.paused) return { ok: true, skipped: true };
-  if (await loginIsMissing()) return { ok: true, skipped: true };
   const slots = await getSlots();
   const maxActive = await readMaxActive();
   const regular = slots.filter((s) => !s.manual).length;
@@ -365,7 +433,9 @@ function previewFromJob(job, extra = {}) {
     completionRate: extra.completionRate || "—",
     postedLabel: extra.postedLabel || "",
     postedAt: extra.postedAt || null,
-    dueAt: extra.dueAt || null,
+    dueAt: extra.dueAt || extra.deadline || null,
+    budget: extra.budget || job.budget || "",
+    deadline: extra.deadline || job.deadline || "",
     loading: Boolean(extra.loading),
     fetchError: Boolean(extra.fetchError),
     at: extra.at || new Date().toISOString(),
@@ -374,14 +444,23 @@ function previewFromJob(job, extra = {}) {
 
 async function fetchJobPreview(job) {
   const base = previewFromJob(job);
-  if (!job?.url || !/crowdworks\.jp/i.test(job.url)) return base;
+  const url = String(job?.url || "");
+  const isCw = /crowdworks\.jp/i.test(url);
+  const isLn = /lancers\.jp/i.test(url);
+  if (!url || (!isCw && !isLn)) return base;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const res = await fetch(job.url, { credentials: "include", redirect: "follow", signal: ctrl.signal });
+    const res = await fetch(url, { credentials: "include", redirect: "follow", signal: ctrl.signal });
     if (!res.ok) return { ...base, fetchError: true };
     const html = await res.text();
-    const parsed = typeof self.parseCrowdWorksDetail === "function" ? self.parseCrowdWorksDetail(html) : null;
+    const parsed = isLn
+      ? typeof self.parseLancersDetail === "function"
+        ? self.parseLancersDetail(html)
+        : null
+      : typeof self.parseCrowdWorksDetail === "function"
+        ? self.parseCrowdWorksDetail(html)
+        : null;
     if (!parsed) return { ...base, fetchError: true };
     return previewFromJob(job, parsed);
   } catch (_) {
@@ -525,13 +604,16 @@ async function claimJobs(need, excludeIds) {
     }
   }
   claimed = claimed.filter((job) => job?.id && !skip.has(job.id));
+  if (await lancersIsLoggedOut()) claimed = claimed.filter((job) => !isLancersJob(job));
   if (claimed.length >= need) return claimed.slice(0, need);
 
   const listed = await listBiderJobs();
   const inflight = listed.filter((job) => IN_FLIGHT.has(jobStatus(job)) && !skip.has(job.id));
   const queued = listed.filter((job) => QUEUEABLE.has(jobStatus(job)) && !skip.has(job.id) && !IN_FLIGHT.has(jobStatus(job)));
   const extras = [];
+  const lancersOut = await lancersIsLoggedOut();
   for (const job of [...inflight, ...queued]) {
+    if (lancersOut && isLancersJob(job)) continue;
     if (claimed.length + extras.length >= need) break;
     if (claimed.some((row) => row.id === job.id) || extras.some((row) => row.id === job.id)) continue;
     extras.push(IN_FLIGHT.has(jobStatus(job)) ? job : await markProcessing(job));
@@ -557,6 +639,10 @@ async function reviveSlots(slots) {
       continue;
     }
     const extract = slot.extract || (await fetchJobPreview(slot));
+    if (await skipLancersOpen(slot)) {
+      next.push({ ...slot, tabId: null, extract });
+      continue;
+    }
     const tabId = await openPreparedTab(slot, extract, next.length === 0);
     const updated = { ...slot, tabId, opened: true, extract };
     next.push(updated);
@@ -567,6 +653,8 @@ async function reviveSlots(slots) {
 }
 
 async function openPreparedTab(job, extract, focus) {
+  if (await skipLancersOpen(job)) return null;
+  if (isLancersJob(job)) await markLancersActivity();
   const tab = await chrome.tabs.create({ url: job.url, active: Boolean(focus) });
   await markProcessing(job);
   await markOpened(job, extract);
@@ -603,9 +691,6 @@ async function fillWindow() {
   if (c.paused) {
     return { ok: false, error: "Bider is paused. Click Resume in the popup." };
   }
-  if (await loginIsMissing()) {
-    return { ok: false, error: "CrowdWorksにログインしてください" };
-  }
   if (filling) {
     fillAgain = true;
     return { ok: true, busy: true, slots: await getSlots() };
@@ -623,8 +708,10 @@ async function fillWindow() {
       for (let i = 0; i < jobs.length; i += 1) {
         const job = jobs[i];
         if (!job?.id || have.has(job.id) || !job.url) continue;
+        if (await skipLancersOpen(job)) continue;
         const extract = await fetchJobPreview(job);
         const tabId = await openPreparedTab(job, extract, slots.length === 0);
+        if (!tabId) continue;
         const slot = slotFromJob(job, extract, tabId);
         slots = [...slots, slot];
         have.add(job.id);
@@ -671,6 +758,10 @@ async function openSlot(jobId) {
     }
   }
   const tabId = await openPreparedTab(slot, extract, true);
+  if (!tabId) {
+    if (await skipLancersOpen(slot)) return { ok: false, error: "Lancersにログインしてください" };
+    return { ok: false, error: "Could not open that job tab." };
+  }
   const updated = { ...slot, tabId, opened: true, extract };
   if (fromParked) {
     await setParked(parked.filter((s) => s.id !== slot.id));
@@ -720,7 +811,10 @@ async function openManualJob(job) {
   const settings = await cfg();
   if (!job?.id || !job.url) return { ok: false };
   if (!settings.applyEnabled || settings.paused) return { ok: true, queued: true };
-  if (await loginIsMissing()) return { ok: false, error: "CrowdWorksにログインしてください" };
+  if (await skipLancersOpen(job)) {
+    await setLancersLoggedOut(true, { toast: true });
+    return { ok: false, error: "Lancersにログインしてください" };
+  }
   const slots = await getSlots();
   const existing = slots.find((s) => s.id === job.id);
   if (existing?.tabId) {
@@ -743,6 +837,10 @@ async function openQueuedJob(jobId) {
   const listed = await listBiderJobs();
   const job = listed.find((row) => row.id === jobId);
   if (!job?.url) return { ok: false, error: "That job is not in the queue." };
+  if (await skipLancersOpen(job)) {
+    await setLancersLoggedOut(true, { toast: true });
+    return { ok: false, error: "Lancersにログインしてください" };
+  }
   const extract = await fetchJobPreview(job);
   const tabId = await openPreparedTab(job, extract, true);
   const slot = slotFromJob(job, extract, tabId);
@@ -857,7 +955,7 @@ async function runApplyFlow(tabId, draft, jobId) {
   let extract = draft || (await draftFor(jobId, tabId));
   let first = await sendToTab(tabId, { type: "AUTO_APPLY", extract });
   if (first?.error === "not_logged_in") {
-    await haltForLogin();
+    await setLancersLoggedOut(true, { toast: false });
     return first;
   }
   if (first?.extract) {
@@ -868,7 +966,7 @@ async function runApplyFlow(tabId, draft, jobId) {
     await waitTabComplete(tabId);
     const second = await sendToTab(tabId, { type: "AUTO_APPLY", extract });
     if (second?.error === "not_logged_in") {
-      await haltForLogin();
+      await setLancersLoggedOut(true, { toast: false });
       return second;
     }
     if (second?.extract) await rememberExtract(second.extract, tabId, jobId);
@@ -931,12 +1029,27 @@ async function runListingScan() {
       const intervalMs = Math.max(5, Number(source.scan_interval) || 60) * 1000;
       const last = Number(lastRuns[source.id] || 0);
       if (last && now - last < intervalMs) continue;
+      if (source.platform === "lancers" && (await lancersIsLoggedOut())) continue;
       try {
         const res = await fetch(source.url, { credentials: "include", redirect: "follow" });
         if (!res.ok) throw new Error(`HTTP ${res.status} for ${source.platform}`);
         const html = await res.text();
-        const user = typeof self.parseLoggedInUser === "function" ? self.parseLoggedInUser(html) : "";
-        if (user) await rememberProfileUser(user);
+        if (source.platform === "lancers") {
+          const lancersUser =
+            typeof self.parseLancersLoggedInUser === "function" ? self.parseLancersLoggedInUser(html) : "";
+          if (lancersUser) await rememberProfileUser(lancersUser);
+          const loggedOut =
+            typeof self.parseLancersLoggedOut === "function" ? self.parseLancersLoggedOut(html) : false;
+          if (loggedOut) {
+            await setLancersLoggedOut(true, { toast: true });
+            lastRuns[source.id] = Date.now();
+            continue;
+          }
+          await markLancersActivity();
+        } else {
+          const user = typeof self.parseLoggedInUser === "function" ? self.parseLoggedInUser(html) : "";
+          if (user) await rememberProfileUser(user);
+        }
         const jobs = parseListingJobs(html, source.platform);
         const actor = await getActor();
         const result = await api("/api/jobs/ingest", {
@@ -1005,6 +1118,8 @@ async function testConnection() {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
+  scheduleLancersAlarm();
+  clearStaleLoginHalt();
   migrateLocalhostIfUnreachable();
   scheduleScanAlarm();
 });
@@ -1013,6 +1128,8 @@ chrome.runtime.onStartup.addListener(() => {
   migrateLocalhostIfUnreachable();
   scheduleScanAlarm();
   chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
+  scheduleLancersAlarm();
+  clearStaleLoginHalt();
   connect();
 });
 
@@ -1023,6 +1140,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     topUpIfNeeded();
   }
   if (alarm.name === SCAN_ALARM) runListingScan();
+  if (alarm.name === LANCERS_ALARM) keepLancersSession();
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -1114,12 +1232,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return;
     } else if (msg.type === "PAGE_EXTRACT") {
       await rememberExtract(msg.extract, _sender.tab?.id);
+      if (isLancersWorkUrl(_sender.tab?.url) || isLancersJob({ url: msg.extract?.url })) {
+        await markLancersActivity();
+      }
       sendResponse({ ok: true });
     } else if (msg.type === "LOGIN_MISSING") {
-      await haltForLogin();
+      sendResponse({ ok: true });
+    } else if (msg.type === "LANCERS_LOGGED_OUT") {
+      await setLancersLoggedOut(true, { toast: false });
+      sendResponse({ ok: true });
+    } else if (msg.type === "LANCERS_ACTIVITY") {
+      await markLancersActivity();
       sendResponse({ ok: true });
     } else if (msg.type === "PROFILE_USER") {
       await rememberProfileUser(msg.name);
+      if (String(msg.platform || "").toLowerCase() === "lancers") await markLancersActivity();
       sendResponse({ ok: true });
     } else if (msg.type === "LIST_JOBS") {
       try {
@@ -1160,7 +1287,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         profileUser: "",
         profileKey: "",
         biderDay: "",
-        loginMissing: false,
+        lancersLoggedOut: false,
       });
       const slots = Array.isArray(local.activeSlots) ? local.activeSlots : [];
       const parked = Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
@@ -1181,7 +1308,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         profileKey: local.profileKey || "",
         biderDay: local.biderDay || "",
         focusedTabId,
-        loginMissing: Boolean(local.loginMissing),
+        lancersLoggedOut: Boolean(local.lancersLoggedOut),
         scanStatus: local.scanStatus || null,
         pageExtract: local.pageExtract || local.applyDraft || slots[0]?.extract || null,
         applyDraft: local.applyDraft || slots[0]?.extract || null,
@@ -1214,5 +1341,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 migrateLocalhostIfUnreachable();
 scheduleScanAlarm();
+scheduleLancersAlarm();
+clearStaleLoginHalt();
 chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
 connect();

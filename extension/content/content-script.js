@@ -25,6 +25,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return;
   }
+  if (msg.type === "LANCERS_SESSION_CHECK") {
+    const loggedOut = platform && platform.name === "lancers" && typeof platform.isLoggedOut === "function" && platform.isLoggedOut();
+    sendResponse({ ok: true, loggedOut: Boolean(loggedOut), name: platform?.extractLoggedInUser?.() || "" });
+    return;
+  }
   if (!platform) {
     sendResponse({ ok: false, error: "no_platform" });
     return;
@@ -45,18 +50,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
 
     if (msg.type === "PREPARE" || msg.type === "AUTO_APPLY") {
+      if (platform.name === "lancers" && typeof platform.isLoggedOut === "function" && platform.isLoggedOut()) {
+        showToast("Lancersにログインしてください");
+        chrome.runtime.sendMessage({ type: "LANCERS_LOGGED_OUT" });
+        sendResponse({ ok: false, error: "not_logged_in", stopped: true });
+        return;
+      }
       if (typeof platform.prepare === "function") {
-        const result = await platform.prepare(msg);
-        if (result?.error === "not_logged_in") {
-          showToast("CrowdWorksにログインしてください");
-          chrome.runtime.sendMessage({ type: "LOGIN_MISSING" });
-        }
-        sendResponse(result);
+        sendResponse(await platform.prepare(msg));
         return;
       }
       const apply = platform.findApplyControl();
       const box = platform.findProposalBox();
-      const description = platform.extractDescription();
+      const description =
+        (typeof platform.extractPage === "function" && platform.extractPage()?.details) || platform.extractDescription();
       if (box && (platform.isProposalPage() || !apply)) {
         box.focus();
         box.value = description;
@@ -77,7 +84,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 (function watchUserApply() {
-  const FINAL = /送信する|提出する|応募を送信|この内容で応募|^応募する$/;
+  const FINAL = /送信する|提出する|応募を送信|この内容で応募|^応募する$|提案を送信/;
   document.addEventListener(
     "click",
     (event) => {
@@ -97,22 +104,31 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   function reportUser(tries) {
     try {
-      if (typeof platform.extractLoggedInUser !== "function") return;
-      const name = platform.extractLoggedInUser();
-      if (name) {
-        chrome.runtime.sendMessage({ type: "PROFILE_USER", name, platform: platform.name });
+      if (platform.name === "lancers" && typeof platform.isLoggedOut === "function" && platform.isLoggedOut()) {
+        chrome.runtime.sendMessage({ type: "LANCERS_LOGGED_OUT" });
         return;
+      }
+      if (typeof platform.extractLoggedInUser === "function") {
+        const name = platform.extractLoggedInUser();
+        if (name) {
+          chrome.runtime.sendMessage({ type: "PROFILE_USER", name, platform: platform.name });
+          if (platform.name === "lancers") chrome.runtime.sendMessage({ type: "LANCERS_ACTIVITY" });
+          return;
+        }
       }
     } catch (_) {
       /* ignore */
     }
     if (tries > 0) {
       setTimeout(() => reportUser(tries - 1), 700);
-      return;
     }
-    if (platform.name === "crowdworks") chrome.runtime.sendMessage({ type: "LOGIN_MISSING" });
   }
   reportUser(5);
+
+  if (/lancers\.jp/i.test(location.hostname) && /\/work\/(detail|propose_start)\//.test(location.pathname)) {
+    chrome.runtime.sendMessage({ type: "LANCERS_ACTIVITY" });
+  }
+
   if (typeof platform.extractPage !== "function") return;
   if (platform.isProposalPage && platform.isProposalPage()) return;
   try {
