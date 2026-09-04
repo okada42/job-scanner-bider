@@ -8,6 +8,7 @@ from app.core.rules import client_is_excluded, job_matches
 from app.integrations.discord import notify_new_job
 from app.integrations.hub import hub
 from app.platforms.registry import ADAPTERS
+from app.core.priority import is_manual_job
 from app.store import (
     add_event,
     find_job,
@@ -17,6 +18,7 @@ from app.store import (
     insert_job,
     jobs_failed_discord,
     queued_jobs,
+    touch_actor,
     update_source,
 )
 
@@ -95,6 +97,9 @@ def bider_payload(job: dict) -> dict:
         "posted_at": posted,
         "detected_at": job.get("detected_at"),
         "status": job.get("status"),
+        "priority": int(job.get("priority") or 0),
+        "manual": is_manual_job(job),
+        "hourly": extra.get("hourly") if extra.get("hourly") is not None else job.get("hourly"),
     }
 
 
@@ -151,6 +156,8 @@ async def ingest_jobs(
     discorded = 0
     first_scan = is_first_scan(source) if baseline is None else baseline
     who = (actor or "").strip()[:80]
+    if who:
+        touch_actor(who)
     actor_meta = {"actor": who} if who else {}
     settings = get_bider_settings()
     excluded_clients = (get_control() or {}).get("excluded_clients") or []

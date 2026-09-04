@@ -26,8 +26,24 @@ function formatJpDate(parts) {
   return `${date} ${String(parts.h).padStart(2, "0")}:${String(parts.min).padStart(2, "0")}`;
 }
 
+function formatCompact(partsOrText) {
+  const parts = partsOrText && typeof partsOrText === "object" ? partsOrText : parseJpDate(partsOrText);
+  if (parts && parts.m && parts.d) {
+    const date = `${parts.m}/${parts.d}`;
+    if (parts.h == null || parts.min == null) return date;
+    return `${date} ${String(parts.h).padStart(2, "0")}:${String(parts.min).padStart(2, "0")}`;
+  }
+  const raw = String(partsOrText || "").trim();
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (iso) {
+    const date = `${Number(iso[2])}/${Number(iso[3])}`;
+    return iso[4] != null ? `${date} ${iso[4]}:${iso[5]}` : date;
+  }
+  return raw.replace(/\s+/g, " ");
+}
+
 function todayJst() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Tokyo" });
 }
 
-globalThis.JobBiderDates = { parseJpDate, plusOneMonth, formatJpDate, todayJst };
+globalThis.JobBiderDates = { parseJpDate, plusOneMonth, formatJpDate, formatCompact, todayJst };

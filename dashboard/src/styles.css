@@ -114,12 +114,25 @@ thead th {
 }
 .split { display: grid; grid-template-columns: 320px 1fr; gap: 12px; }
 .top-split { margin-bottom: 8px; }
+.jobs-stack { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
 .grow { min-width: 0; }
 .panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
 .pager, .pager-sizes, .pager-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pager { justify-content: space-between; margin-top: 12px; }
 .pager-count { color: var(--muted); font-size: 13px; }
 .bider { display: grid; gap: 10px; }
+.bider-bar {
+  display: grid;
+  grid-template-columns: 150px 110px minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.bider-bar label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.bider-inbox textarea {
+  min-height: 72px;
+  resize: vertical;
+  line-height: 1.4;
+}
 .user-states { display: flex; flex-wrap: wrap; gap: 6px; }
 .bider label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 .err { color: var(--off); }
@@ -173,6 +186,6 @@ thead th {
 }
 
 @media (max-width: 960px) {
-  .grid3, .split, .add { grid-template-columns: 1fr; }
+  .grid3, .split, .add, .bider-bar { grid-template-columns: 1fr; }
   .panel-head { flex-direction: column; }
 }

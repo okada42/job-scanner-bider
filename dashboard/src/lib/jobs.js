@@ -44,9 +44,10 @@ export function jobUserStates(job) {
         state: claimStateLabel(row?.status),
         updated_at: row?.updated_at || null,
       }))
-      .filter((row) => row.actor);
+      .filter((row) => row.actor && !/^ext-/i.test(row.actor));
   }
-  return [];
+  const fallback = claimStateLabel(job?.status);
+  return fallback ? [{ actor: "", state: fallback, updated_at: job?.status_at || job?.updated_at || null }] : [];
 }
 
 export function formatDuration(ms) {

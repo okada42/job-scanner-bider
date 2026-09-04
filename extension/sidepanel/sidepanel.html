@@ -36,8 +36,21 @@
       }
       .tag-queued { background: #243246; color: #9ec5ff; }
       .tag-ready { background: #2a3a24; color: #b7e38d; }
+      .tag-sent { background: #24344a; color: #9ec5ff; }
       .tag-skipped { background: #3a3224; color: #f0c987; }
       .tag-closed { background: #3a2428; color: #f0a3a8; }
+      .row.manual .url { color: #c4b5fd; }
+      details.group { margin-top: 12px; border-top: 1px solid #2a3344; padding-top: 8px; }
+      details.group summary {
+        cursor: pointer;
+        color: #e8b86d;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        list-style: none;
+      }
+      details.group summary::-webkit-details-marker { display: none; }
+      details.group summary::before { content: "▸ "; }
+      details.group[open] summary::before { content: "▾ "; }
     </style>
   </head>
   <body>
@@ -49,8 +62,18 @@
     </header>
     <div class="body">
       <div id="slots"></div>
-      <h3 id="parkedHead" hidden>SKIPPED / CLOSED</h3>
-      <div id="parked"></div>
+      <details class="group" id="sentBox" hidden>
+        <summary id="sentHead">SENT</summary>
+        <div id="sent"></div>
+      </details>
+      <details class="group" id="skippedBox" hidden>
+        <summary id="skippedHead">SKIPPED</summary>
+        <div id="skipped"></div>
+      </details>
+      <details class="group" id="closedBox" hidden>
+        <summary id="closedHead">CLOSED</summary>
+        <div id="closed"></div>
+      </details>
       <button id="open" class="primary">Fill window</button>
       <button id="prepare">Prepare this tab</button>
       <button id="skip">SKIP</button>

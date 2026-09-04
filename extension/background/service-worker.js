@@ -31,9 +31,9 @@ async function cfg() {
 }
 
 async function rememberProfileUser(name) {
-  const value = String(name || "").replace(/\s+/g, " ").trim();
+  const value = String(name || "").replace(/\s+/g, " ").trim().replace(/さん$/, "");
   if (!value || value.length > 40 || /login|会員|ログイン/i.test(value)) return "";
-  await chrome.storage.local.set({ profileUser: value });
+  await chrome.storage.local.set({ profileUser: value, loginMissing: false });
   registerActor();
   return value;
 }
@@ -70,6 +70,9 @@ async function connect() {
     const event = String(msg?.event || "").toUpperCase();
     if (event === "NEW_JOB" || event === "JOB_AVAILABLE") {
       await onJobAlert(msg.job);
+    }
+    if (event === "MANUAL_JOB") {
+      await openManualJob(msg.job);
     }
   };
   ws.onclose = () => {
@@ -182,9 +185,47 @@ async function pingBiderSocket() {
   }
 }
 
+async function loginIsMissing() {
+  const local = await chrome.storage.local.get({ loginMissing: false });
+  return Boolean(local.loginMissing);
+}
+
+async function toastCrowdWorks(text) {
+  try {
+    const tabs = await chrome.tabs.query({ url: ["https://crowdworks.jp/*", "https://www.crowdworks.jp/*"] });
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id
+          ? chrome.tabs.sendMessage(tab.id, { type: "SHOW_TOAST", text }).catch(() => {})
+          : Promise.resolve()
+      )
+    );
+  } catch (_) {
+    /* no tab */
+  }
+  try {
+    await chrome.notifications.create({
+      type: "basic",
+      iconUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      title: "Job Bider",
+      message: text,
+    });
+  } catch (_) {
+    /* notifications optional */
+  }
+}
+
+async function haltForLogin() {
+  const c = await cfg();
+  if (!c.applyEnabled) return;
+  await chrome.storage.local.set({ loginMissing: true });
+  await toastCrowdWorks("CrowdWorksにログインしてください");
+}
+
 async function onJobAlert(job) {
   const settings = await cfg();
   if (!settings.applyEnabled || settings.paused) return;
+  if (await loginIsMissing()) return;
   await fillWindow();
   return job;
 }
@@ -192,9 +233,11 @@ async function onJobAlert(job) {
 async function topUpIfNeeded() {
   const settings = await cfg();
   if (!settings.applyEnabled || settings.paused) return { ok: true, skipped: true };
+  if (await loginIsMissing()) return { ok: true, skipped: true };
   const slots = await getSlots();
   const maxActive = await readMaxActive();
-  if (slots.length >= maxActive) return { ok: true, slots, maxActive };
+  const regular = slots.filter((s) => !s.manual).length;
+  if (regular >= maxActive) return { ok: true, slots, maxActive };
   return fillWindow();
 }
 
@@ -366,7 +409,7 @@ function jobStatus(job) {
 }
 
 function isPlatformUser(name) {
-  const value = String(name || "").replace(/\s+/g, " ").trim();
+  const value = String(name || "").replace(/\s+/g, " ").trim().replace(/さん$/, "");
   return Boolean(value) && value.length <= 40 && !/^ext-/i.test(value) && !/login|会員|ログイン/i.test(value);
 }
 
@@ -546,6 +589,9 @@ function slotFromJob(job, extract, tabId) {
     extract,
     status: job.status || "PROCESSING",
     claim_status: "PROCESSING",
+    manual: Boolean(job.manual || Number(job.priority || 0) >= 100),
+    priority: Number(job.priority || 0),
+    hourly: job.hourly,
   };
 }
 
@@ -557,6 +603,9 @@ async function fillWindow() {
   if (c.paused) {
     return { ok: false, error: "Bider is paused. Click Resume in the popup." };
   }
+  if (await loginIsMissing()) {
+    return { ok: false, error: "CrowdWorksにログインしてください" };
+  }
   if (filling) {
     fillAgain = true;
     return { ok: true, busy: true, slots: await getSlots() };
@@ -567,7 +616,8 @@ async function fillWindow() {
       const maxActive = await readMaxActive();
     let slots = await reviveSlots(await getSlots());
     const have = new Set(slots.map((s) => s.id));
-    const need = maxActive - slots.length;
+    const regular = slots.filter((s) => !s.manual).length;
+    const need = maxActive - regular;
     if (need > 0) {
       const jobs = await claimJobs(need, have);
       for (let i = 0; i < jobs.length; i += 1) {
@@ -664,6 +714,29 @@ async function focusJob(jobId) {
   const opened = await openSlot(jobId);
   if (opened?.job?.tabId) await focusTab(opened.job.tabId);
   return opened;
+}
+
+async function openManualJob(job) {
+  const settings = await cfg();
+  if (!job?.id || !job.url) return { ok: false };
+  if (!settings.applyEnabled || settings.paused) return { ok: true, queued: true };
+  if (await loginIsMissing()) return { ok: false, error: "CrowdWorksにログインしてください" };
+  const slots = await getSlots();
+  const existing = slots.find((s) => s.id === job.id);
+  if (existing?.tabId) {
+    await focusTab(existing.tabId);
+    return { ok: true, job: existing };
+  }
+  const extract = await fetchJobPreview(job);
+  const marked = { ...job, manual: true, priority: Number(job.priority || 100) };
+  const tabId = await openPreparedTab(marked, extract, true);
+  const slot = slotFromJob(marked, extract, tabId);
+  const parked = await getParked();
+  await setParked(parked.filter((s) => s.id !== job.id));
+  const have = slots.some((s) => s.id === job.id);
+  await setSlots(have ? slots.map((s) => (s.id === job.id ? slot : s)) : [...slots, slot]);
+  await setDraft(job.id, extract);
+  return { ok: true, job: slot };
 }
 
 async function openQueuedJob(jobId) {
@@ -783,6 +856,10 @@ async function runApplyFlow(tabId, draft, jobId) {
   await waitTabComplete(tabId);
   let extract = draft || (await draftFor(jobId, tabId));
   let first = await sendToTab(tabId, { type: "AUTO_APPLY", extract });
+  if (first?.error === "not_logged_in") {
+    await haltForLogin();
+    return first;
+  }
   if (first?.extract) {
     extract = first.extract;
     await rememberExtract(extract, tabId, jobId);
@@ -790,6 +867,10 @@ async function runApplyFlow(tabId, draft, jobId) {
   if (first?.stage === "clicked_apply") {
     await waitTabComplete(tabId);
     const second = await sendToTab(tabId, { type: "AUTO_APPLY", extract });
+    if (second?.error === "not_logged_in") {
+      await haltForLogin();
+      return second;
+    }
     if (second?.extract) await rememberExtract(second.extract, tabId, jobId);
     return second;
   }
@@ -1014,7 +1095,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           slots.find((s) => s.tabId === tabId) ||
           (msg.jobId && slots.find((s) => s.id === msg.jobId)) ||
           slots[0];
-        sendResponse(slot ? await finishSlot(slot.id, "COMPLETED", { park: false, closeTab: false }) : { ok: true });
+        sendResponse(slot ? await finishSlot(slot.id, "COMPLETED", { park: true, closeTab: false, reason: "sent" }) : { ok: true });
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
       }
@@ -1033,6 +1114,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return;
     } else if (msg.type === "PAGE_EXTRACT") {
       await rememberExtract(msg.extract, _sender.tab?.id);
+      sendResponse({ ok: true });
+    } else if (msg.type === "LOGIN_MISSING") {
+      await haltForLogin();
       sendResponse({ ok: true });
     } else if (msg.type === "PROFILE_USER") {
       await rememberProfileUser(msg.name);
@@ -1076,6 +1160,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         profileUser: "",
         profileKey: "",
         biderDay: "",
+        loginMissing: false,
       });
       const slots = Array.isArray(local.activeSlots) ? local.activeSlots : [];
       const parked = Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
@@ -1096,6 +1181,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         profileKey: local.profileKey || "",
         biderDay: local.biderDay || "",
         focusedTabId,
+        loginMissing: Boolean(local.loginMissing),
         scanStatus: local.scanStatus || null,
         pageExtract: local.pageExtract || local.applyDraft || slots[0]?.extract || null,
         applyDraft: local.applyDraft || slots[0]?.extract || null,
@@ -1103,6 +1189,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
   })();
   return true;
+});
+
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  const url = String(info.url || tab?.url || "");
+  if (!url || (!info.url && info.status !== "complete")) return;
+  if (!/crowdworks\.jp\/proposals\/\d+/i.test(url)) return;
+  getSlots().then((slots) => {
+    const slot = slots.find((s) => s.tabId === tabId);
+    if (slot) finishSlot(slot.id, "COMPLETED", { park: true, closeTab: false, reason: "sent" });
+  });
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {

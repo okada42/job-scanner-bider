@@ -41,8 +41,8 @@ export const JobRow = memo(function JobRow({ job, now, reporting, onReport }) {
         ) : (
           <div className="user-states">
             {states.map((row) => (
-              <span key={row.actor} className={`pill ${userStatePillClass(row.state)}`}>
-                {row.actor} {row.state}
+              <span key={row.actor || row.state} className={`pill ${userStatePillClass(row.state)}`}>
+                {row.actor ? `${row.actor} ${row.state}` : row.state}
               </span>
             ))}
           </div>

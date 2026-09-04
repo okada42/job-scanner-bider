@@ -1,8 +1,10 @@
+import re
 import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
 
+from app.core.priority import MANUAL_PRIORITY, is_manual_job
 from app.db import supabase
 
 _AGE_STATUSES = ("PROCESSING", "COMPLETED", "SENT_TO_BIDER", "WAITING_FOR_USER")
@@ -418,17 +420,20 @@ def update_job(job_id: str, patch: dict) -> dict:
 
 def queued_jobs(limit: int = 50) -> list[dict]:
     try:
-        return (
+        rows = (
             supabase()
             .table("jobs")
             .select("*")
             .eq("status", "QUEUED")
+            .order("priority", desc=True)
             .order("detected_at", desc=True)
-            .limit(limit)
+            .limit(max(int(limit), 50))
             .execute()
             .data
             or []
         )
+        rows.sort(key=lambda job: (-int(job.get("priority") or 0), str(job.get("detected_at") or "")))
+        return rows[: int(limit)]
     except Exception:
         return []
 
@@ -526,7 +531,11 @@ def actor_active_count(actor: str) -> int:
             .data
             or []
         )
-        return sum(1 for row in rows if _claim_is_today(row))
+        return sum(
+            1
+            for row in rows
+            if _claim_is_today(row) and not is_manual_job(get_job(str(row.get("job_id") or "")) or {})
+        )
     except Exception:
         return active_job_count()
 
@@ -578,12 +587,14 @@ def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
             sb.table("jobs")
             .select("*")
             .in_("status", list(_BIDER_POOL))
+            .order("priority", desc=True)
             .order("detected_at", desc=True)
             .limit(200)
             .execute()
             .data
             or []
         )
+        jobs.sort(key=lambda job: int(job.get("priority") or 0), reverse=True)
         out = []
         for job in jobs:
             jid = str(job.get("id") or "")
@@ -630,6 +641,7 @@ def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
 
 def _platform_actor(actor: str) -> str:
     name = str(actor or "").strip()[:80]
+    name = re.sub(r"さん$", "", name).strip()
     if not name or name.lower().startswith("ext-"):
         return ""
     return name

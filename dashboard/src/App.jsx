@@ -17,6 +17,8 @@ const META_POLL_MS = 20000;
 export default function App() {
   const [token, setTok] = useState(getToken);
   const [login, setLogin] = useState(getToken);
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinNote, setPinNote] = useState(null);
   const [state, dispatch] = useReducer(reducer, initialState);
   const authed = Boolean(token);
 
@@ -215,6 +217,41 @@ export default function App() {
     [refreshAll]
   );
 
+  const onAddUrls = useCallback(
+    async (text) => {
+      setPinBusy(true);
+      setPinNote(null);
+      dispatch({ type: "error", error: "" });
+      try {
+        const result = await api("/api/jobs/manual", {
+          method: "POST",
+          body: JSON.stringify({ text }),
+        });
+        const added = (result.jobs || []).length;
+        const skipped = (result.skipped || []).length;
+        setPinNote({
+          ok: added > 0,
+          text:
+            added > 0
+              ? `Added ${added} URL${added === 1 ? "" : "s"} to the front of the queue.${
+                  skipped ? ` Skipped ${skipped} line${skipped === 1 ? "" : "s"}.` : ""
+                }`
+              : skipped
+                ? "No valid job URLs. Use CrowdWorks / Lancers / Coconala listing links, one per line."
+                : "No URLs to add.",
+        });
+        await refreshAll();
+        return added > 0;
+      } catch (err) {
+        setPinNote({ ok: false, text: err.message || "Could not add URLs." });
+        return false;
+      } finally {
+        setPinBusy(false);
+      }
+    },
+    [refreshAll]
+  );
+
   if (!authed) {
     return <LoginForm login={login} error={state.error} onLoginChange={setLogin} onSubmit={tryLogin} />;
   }
@@ -233,8 +270,15 @@ export default function App() {
       />
       {state.error && <p className="err">{state.error}</p>}
 
-      <section className="split top-split">
-        <QueuePanel bider={state.bider} onMode={onBiderMode} onMaxActive={onBiderMax} />
+      <section className="jobs-stack">
+        <QueuePanel
+          bider={state.bider}
+          busy={pinBusy}
+          note={pinNote}
+          onMode={onBiderMode}
+          onMaxActive={onBiderMax}
+          onAddUrls={onAddUrls}
+        />
         <JobsPanel
           jobs={state.jobs}
           total={state.jobsTotal}

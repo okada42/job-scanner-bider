@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from app.auth import require_token
+from app.core.manual import pin_manual_jobs
 from app.core.scanner import bider_payload, claim_next_job, collect_next_jobs, ingest_jobs
 from app.db import JOB_STATUSES
 from app.integrations.hub import hub
-from app.schemas import ClaimBatch, JobIngestRequest, JobStatusUpdate
+from app.schemas import ClaimBatch, JobIngestRequest, JobStatusUpdate, ManualJobsRequest
 from app.store import (
     active_jobs,
     actor_active_jobs,
@@ -57,7 +58,7 @@ def attach_user_states(rows: list[dict]) -> list[dict]:
         names = list(actors)
         for claim in claims:
             actor = str(claim.get("actor") or "").strip()
-            if actor and actor.lower() not in seen:
+            if actor and actor.lower() not in seen and not actor.lower().startswith("ext-"):
                 seen[actor.lower()] = actor
                 names.append(actor)
         claimed = {str(c.get("actor") or "").strip().lower(): c for c in claims}
@@ -141,6 +142,11 @@ async def ingest(body: JobIngestRequest, actor: str = Depends(_actor)):
             raise HTTPException(404, "Source not found")
     who = actor or (body.actor or "")
     return await ingest_jobs(body.jobs, source=source, actor=who)
+
+
+@router.post("/manual")
+async def manual_jobs(body: ManualJobsRequest):
+    return await pin_manual_jobs(text=body.text or "", urls=body.urls)
 
 
 @router.post("/actor")

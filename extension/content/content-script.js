@@ -1,5 +1,30 @@
+function showToast(text) {
+  const msg = String(text || "").trim();
+  if (!msg) return;
+  let el = document.getElementById("jsb-toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "jsb-toast";
+    el.setAttribute("role", "status");
+    el.style.cssText =
+      "position:fixed;top:16px;right:16px;z-index:2147483647;max-width:320px;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;font:14px/1.4 sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.35)";
+    (document.body || document.documentElement).appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => {
+    el.style.display = "none";
+  }, 7000);
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const platform = window.JobBiderPlatform;
+  if (msg.type === "SHOW_TOAST") {
+    showToast(msg.text);
+    sendResponse({ ok: true });
+    return;
+  }
   if (!platform) {
     sendResponse({ ok: false, error: "no_platform" });
     return;
@@ -21,7 +46,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     if (msg.type === "PREPARE" || msg.type === "AUTO_APPLY") {
       if (typeof platform.prepare === "function") {
-        sendResponse(await platform.prepare(msg));
+        const result = await platform.prepare(msg);
+        if (result?.error === "not_logged_in") {
+          showToast("CrowdWorksにログインしてください");
+          chrome.runtime.sendMessage({ type: "LOGIN_MISSING" });
+        }
+        sendResponse(result);
         return;
       }
       const apply = platform.findApplyControl();
@@ -64,14 +94,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 (function reportExtract() {
   const platform = window.JobBiderPlatform;
   if (!platform) return;
-  try {
-    if (typeof platform.extractLoggedInUser === "function") {
+
+  function reportUser(tries) {
+    try {
+      if (typeof platform.extractLoggedInUser !== "function") return;
       const name = platform.extractLoggedInUser();
-      if (name) chrome.runtime.sendMessage({ type: "PROFILE_USER", name, platform: platform.name });
+      if (name) {
+        chrome.runtime.sendMessage({ type: "PROFILE_USER", name, platform: platform.name });
+        return;
+      }
+    } catch (_) {
+      /* ignore */
     }
-  } catch (_) {
-    /* ignore */
+    if (tries > 0) {
+      setTimeout(() => reportUser(tries - 1), 700);
+      return;
+    }
+    if (platform.name === "crowdworks") chrome.runtime.sendMessage({ type: "LOGIN_MISSING" });
   }
+  reportUser(5);
   if (typeof platform.extractPage !== "function") return;
   if (platform.isProposalPage && platform.isProposalPage()) return;
   try {

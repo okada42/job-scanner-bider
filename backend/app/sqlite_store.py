@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.config import local_db_path
+from app.core.priority import MANUAL_PRIORITY
 
 DEFAULT_CONTROL = {
     "id": 1,
@@ -570,7 +572,15 @@ def update_job(job_id: str, patch: dict) -> dict:
 
 
 def queued_jobs(limit: int = 50) -> list[dict]:
-    return list_jobs(status="QUEUED", limit=limit)
+    conn = connect()
+    extra = _NEW_ONLY_SQL
+    rows = conn.execute(
+        f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
+            where status = 'QUEUED' {extra}
+            order by priority desc, detected_at desc limit ?""",
+        (int(limit),),
+    ).fetchall()
+    return [_job_row(r) for r in rows]
 
 
 def jobs_failed_discord(limit: int = 50) -> list[dict]:
@@ -641,8 +651,11 @@ def actor_active_count(actor: str) -> int:
     conn = connect()
     placeholders = ",".join("?" * len(_ACTIVE_STATUSES))
     row = conn.execute(
-        f"select count(*) as n from bider_claims where actor = ? and day = ? and status in ({placeholders})",
-        (actor, claim_day(), *_ACTIVE_STATUSES),
+        f"""select count(*) as n from bider_claims c
+            join jobs j on j.id = c.job_id
+            where c.actor = ? and c.day = ? and c.status in ({placeholders})
+              and coalesce(j.priority, 0) < ?""",
+        (actor, claim_day(), *_ACTIVE_STATUSES, MANUAL_PRIORITY),
     ).fetchone()
     return int(row["n"] if row else 0)
 
@@ -684,7 +697,7 @@ def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
               select 1 from bider_claims c
               where c.job_id = jobs.id and c.actor = ? and c.day = ? and c.status in ({block})
             )
-            order by jobs.detected_at desc limit ?""",
+            order by jobs.priority desc, jobs.detected_at desc limit ?""",
         (
             "QUEUED",
             "SENT_TO_BIDER",
@@ -721,6 +734,7 @@ def actor_skipped_jobs(actor: str, limit: int = 20) -> list[dict]:
 
 def _platform_actor(actor: str) -> str:
     name = str(actor or "").strip()[:80]
+    name = re.sub(r"さん$", "", name).strip()
     if not name or name.lower().startswith("ext-"):
         return ""
     return name

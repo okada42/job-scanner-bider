@@ -5,7 +5,29 @@
     <style>
       body { font: 14px/1.4 sans-serif; margin: 16px; max-width: 520px; }
       input[type="text"], input[type="password"], input[type="url"] { width: 100%; margin: 6px 0 12px; padding: 8px; box-sizing: border-box; }
-      label.toggle { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+      .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0; }
+      .switch-row span { font-weight: 600; }
+      .switch { position: relative; width: 46px; height: 26px; flex: 0 0 auto; }
+      .switch input { opacity: 0; width: 0; height: 0; }
+      .slider {
+        position: absolute; inset: 0;
+        background: #d4d4d4;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .slider::before {
+        content: "";
+        position: absolute;
+        height: 20px; width: 20px;
+        left: 3px; top: 3px;
+        background: #fff;
+        border-radius: 50%;
+        transition: transform 0.15s;
+        box-shadow: 0 1px 3px rgba(0,0,0,.25);
+      }
+      .switch input:checked + .slider { background: #16a34a; }
+      .switch input:checked + .slider::before { transform: translateX(20px); }
       .note { color: #444; font-size: 13px; background: #f4f4f4; padding: 10px 12px; margin: 12px 0; }
       h3 { margin-bottom: 8px; }
       .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
@@ -23,18 +45,24 @@
     <label>API token
       <input id="token" type="password" placeholder="Same token as the dashboard" />
     </label>
-    <label class="toggle">
-      <input type="checkbox" id="scanEnabled" />
-      Enable scan
-    </label>
-    <label class="toggle">
-      <input type="checkbox" id="applyEnabled" />
-      Enable apply (Bider)
-    </label>
+    <div class="switch-row">
+      <span>Job Scan</span>
+      <label class="switch">
+        <input type="checkbox" id="scanEnabled" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="switch-row">
+      <span>Job Bider</span>
+      <label class="switch">
+        <input type="checkbox" id="applyEnabled" />
+        <span class="slider"></span>
+      </label>
+    </div>
     <div class="note">
       <p><strong>Backend URL must be the Railway API</strong> (<code>https://job-scanner-bider-production.up.railway.app</code>), not the Netlify dashboard and not <code>127.0.0.1</code> unless you are running FastAPI locally.</p>
-      <p><strong>Search Chrome profile:</strong> Enable scan ON, Enable apply OFF. Stay logged in on CrowdWorks / Lancers / Coconala. The extension fetches listing URLs with this profile’s cookies and POSTs jobs to Railway. Railway never stores platform passwords.</p>
-      <p><strong>Apply Chrome profile:</strong> Enable scan OFF, Enable apply ON. Opens queued jobs from the shared Railway queue. Does not scan. Never auto-submits.</p>
+      <p><strong>Search Chrome profile:</strong> Job Scan ON, Job Bider OFF. Stay logged in on CrowdWorks / Lancers / Coconala. The extension fetches listing URLs with this profile’s cookies and POSTs jobs to Railway. Railway never stores platform passwords.</p>
+      <p><strong>Apply Chrome profile:</strong> Job Scan OFF, Job Bider ON. Opens queued jobs from the shared Railway queue. Does not scan. Never auto-submits.</p>
       <p><strong>Alarm interval:</strong> Dashboard source intervals are honored as much as Manifest V3 allows. Chrome alarms usually fire at most every 30 seconds (unpacked) or 1 minute (packed). A 60s dashboard interval therefore becomes ~1 minute. Per-source last-run in extension storage still skips a source until its interval has elapsed.</p>
     </div>
     <div class="row">

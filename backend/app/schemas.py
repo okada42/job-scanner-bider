@@ -93,3 +93,8 @@ class JobIngestRequest(BaseModel):
     jobs: list[JobIngestItem] = Field(default_factory=list)
     source_id: str | None = None
     actor: str | None = None
+
+
+class ManualJobsRequest(BaseModel):
+    text: str = ""
+    urls: list[str] = Field(default_factory=list)

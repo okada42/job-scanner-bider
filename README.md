@@ -101,7 +101,7 @@ The search profile **must stay logged in**. Railway’s HTML GET is anonymous; i
 
 The popup and side panel **FROM DATABASE** list is `GET /api/jobs` — the same table the dashboard uses. Scan still POSTs new listings into that table; it does not keep a second copy.
 
-**CrowdWorks apply (never submits):** Set **Max active** on the dashboard (for example `3`). On the Apply profile, **Fill window** opens that many queued URLs. A new-job alert (Discord / websocket) also opens queued URLs until that cap if fewer tabs are open. Each JOB BIDER row stays compact: URL, client, budget, published date/time, deadline, plus **queued / ready / skipped / closed** tags and small Open / Focus / Reopen. Focus brings that job’s tab and window to the front. The focused tab’s URL uses a different color. After a URL is opened once, a third line shows 募集実績 and 完了率. SKIPPED / CLOSED stays a separate list. Scan, open, skip, close, and ready are stored per logged-in CrowdWorks / Lancers / Coconala user name and **reset each Japan calendar day**. Never fills 契約金額. Reload unpacked extension **0.3.12** after `git pull`.
+**CrowdWorks apply (never submits):** Set **Max active** on the dashboard (for example `3`). On the Apply profile, **Fill window** opens that many queued URLs. A new-job alert (Discord / websocket) also opens queued URLs until that cap if fewer tabs are open. Paste job URLs into the Bider inbox (one per line) to push them to the front of the queue and open them immediately as extra tabs (violet URL). Each JOB BIDER row stays compact: URL, `本✓` / `発✓`, `⏰` hourly or `💰` fixed, `掲` / `締` dates, plus **queued / ready / sent / skipped / closed**. Sent, skipped, and closed lists are collapsed. Focus brings that job’s tab and window to the front. After a URL is opened once, a third line shows 募集実績 and 完了率. CrowdWorks waits 1–3 seconds before 応募画面へ and before 完了予定日 (hourly jobs skip the date). Never fills 契約金額. A CrowdWorks `/proposals/{id}` URL after submit is treated as sent. If the header username (e.g. `帆足さん`) is missing, Bider toasts and stops. Reload unpacked extension **0.3.13** after `git pull`.
 
 `host_permissions` already include `https://*.up.railway.app/*`. For a custom domain, add that origin to `extension/manifest.json` and reload.
 
@@ -145,7 +145,7 @@ npm run dev
 
 Open http://127.0.0.1:43123 and sign in with `API_TOKEN` from the repo-root `.env`. Vite proxies `/api` to `127.0.0.1:8000`. Leave `VITE_API_URL` empty locally.
 
-The jobs table sits at the top of the page next to Bider mode and max active. Status is per CrowdWorks / Lancers / Coconala username (`kenji queued`, `kenji skipped`, `kenji ready`). Use **10** or **20** rows per page (default 20). Polls keep the last good rows on screen; they do not blank the table.
+The jobs table sits at the top of the page under Bider mode, max active, and the manual URL inbox. Status is per CrowdWorks / Lancers / Coconala username (`kenji queued`, `kenji skipped`, `kenji ready`). Use **10** or **20** rows per page (default 20). Polls keep the last good rows on screen; they do not blank the table.
 
 `ERR_CONNECTION_REFUSED` on 43123 means this Vite process is not running. The backend on 8000 does not serve the dashboard.
 

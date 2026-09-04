@@ -19,6 +19,19 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function randomWait() {
+  return sleep(1000 + Math.floor(Math.random() * 2000));
+}
+
+function sanitizeActorName(name) {
+  const value = String(name || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/さん$/, "");
+  if (!value || value.length > 40 || /^ext-/i.test(value) || /login|会員|ログイン|sign\s*in/i.test(value)) return "";
+  return value;
+}
+
 function parseEmbeddedJson(el) {
   if (!el) return null;
   const raw = el.getAttribute("data") || "";
@@ -295,7 +308,11 @@ async function fillTemplate(extract) {
 
 async function fillApplication(extract) {
   const due = extract?.dueAt || (extract?.postedAt && JobBiderDates.plusOneMonth(extract.postedAt));
-  const dueSet = fillDueDate(due);
+  let dueSet = false;
+  if (/完了予定日/.test(document.body?.innerText || "")) {
+    await randomWait();
+    dueSet = fillDueDate(due);
+  }
   const tmpl = await fillTemplate(extract);
   return {
     ok: true,
@@ -322,14 +339,26 @@ function mergeExtract(incoming) {
   };
 }
 
+function isSentPage() {
+  return /\/proposals\/\d+/.test(location.pathname);
+}
+
 async function prepare(msg) {
+  const name = extractLoggedInUser();
+  if (!name) {
+    return { ok: false, error: "not_logged_in", stopped: true };
+  }
   const incoming = msg && msg.extract;
+  if (isSentPage()) {
+    return { ok: true, stage: "sent", stopped: true, extract: incoming || null };
+  }
   if (isProposalPage()) {
     return fillApplication(mergeExtract(incoming));
   }
   const extract = mergeExtract(incoming);
   const apply = findApplyControl();
   if (apply) {
+    await randomWait();
     apply.click();
     await sleep(900);
     if (isProposalPage()) return fillApplication(extract);
@@ -350,13 +379,27 @@ window.JobBiderPlatform = {
 };
 
 function extractLoggedInUser() {
+  const headerName =
+    document.querySelector('header [class*="_normanHeaderUserMenu_"] [class*="_username_"]') ||
+    document.querySelector('[class*="_normanProfileClickable_"] [class*="_username_"]') ||
+    document.querySelector('[class*="_normanProfileClickable_"] span');
+  const fromHeader = sanitizeActorName(headerName && headerName.innerText);
+  if (fromHeader) return fromHeader;
   const gon = window.gon && window.gon.current_user;
-  if (gon) return String(gon.display_name || gon.username || gon.name || "").trim();
+  if (gon) {
+    const fromGon = sanitizeActorName(gon.display_name || gon.username || gon.name);
+    if (fromGon) return fromGon;
+  }
   const nuxt = window.__NUXT__ && window.__NUXT__.state;
   const fromState =
     nuxt &&
     (nuxt.currentUser || nuxt.current_user || (nuxt.auth && (nuxt.auth.user || nuxt.auth.currentUser)));
-  if (fromState) return String(fromState.displayName || fromState.display_name || fromState.username || fromState.name || "").trim();
+  if (fromState) {
+    const fromNuxt = sanitizeActorName(
+      fromState.displayName || fromState.display_name || fromState.username || fromState.name
+    );
+    if (fromNuxt) return fromNuxt;
+  }
   const sels = [
     "[data-current-user-name]",
     "#header-username",
@@ -367,8 +410,8 @@ function extractLoggedInUser() {
   ];
   for (const sel of sels) {
     const el = document.querySelector(sel);
-    const text = (el && (el.getAttribute("data-current-user-name") || el.innerText) || "").replace(/\s+/g, " ").trim();
-    if (text && text.length <= 40 && !/login|会員|ログイン/i.test(text)) return text;
+    const text = sanitizeActorName(el && (el.getAttribute("data-current-user-name") || el.innerText));
+    if (text) return text;
   }
   return "";
 }

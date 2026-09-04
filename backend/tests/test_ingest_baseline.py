@@ -15,6 +15,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     sqlite_store.reset()
     sqlite_store.connect()
     for name in (
+        "touch_actor",
         "find_job",
         "insert_job",
         "add_event",
@@ -589,3 +590,57 @@ def test_list_jobs_includes_status_at_for_processing(db):
     row = next(j for j in listed if j["id"] == job["id"])
     assert row["status"] == "PROCESSING"
     assert row["status_at"]
+
+
+def test_parse_manual_job_urls():
+    from app.core.manual import parse_job_urls
+
+    parsed, skipped = parse_job_urls(
+        "https://crowdworks.jp/public/jobs/13391751\nnot-a-job\nhttps://www.lancers.jp/work/detail/42\n"
+    )
+    assert [(row["platform"], row["external_job_id"]) for row in parsed] == [
+        ("crowdworks", "13391751"),
+        ("lancers", "42"),
+    ]
+    assert skipped == ["not-a-job"]
+
+
+def test_pin_manual_jobs_queue_top_without_discord(db, monkeypatch):
+    from app.core.manual import pin_manual_jobs
+
+    monkeypatch.setattr("app.core.manual.find_job", sqlite_store.find_job)
+    monkeypatch.setattr("app.core.manual.insert_job", sqlite_store.insert_job)
+    monkeypatch.setattr("app.core.manual.update_job", sqlite_store.update_job)
+    monkeypatch.setattr("app.core.manual.add_event", sqlite_store.add_event)
+    asyncio.run(ingest_jobs([_job("1")], source=db))
+    source = sqlite_store.get_source(db["id"])
+    asyncio.run(ingest_jobs([_job("1"), _job("2")], source=source))
+    seen = []
+
+    async def capture(msg):
+        seen.append(msg)
+
+    monkeypatch.setattr("app.core.manual.hub.broadcast", capture)
+    result = asyncio.run(
+        pin_manual_jobs(
+            "https://crowdworks.jp/public/jobs/900001\nhttps://crowdworks.jp/public/jobs/2"
+        )
+    )
+    assert result["created"] == 1
+    assert result["bumped"] == 1
+    assert [event["event"] for event in seen] == ["MANUAL_JOB", "MANUAL_JOB"]
+    queued = sqlite_store.queued_jobs(10)
+    assert queued[0]["external_job_id"] == "900001"
+    assert queued[0]["priority"] >= 100
+    assert queued[1]["external_job_id"] == "2"
+    events = sqlite_store.connect().execute(
+        "select event from job_events where event = 'DISCORD_SENT' and job_id = ?",
+        (queued[0]["id"],),
+    ).fetchall()
+    assert events == []
+
+
+def test_ingest_registers_honorific_username(db):
+    asyncio.run(ingest_jobs([_job("1")], source=db, actor="帆足さん"))
+    assert sqlite_store.list_claim_actors() == ["帆足"]
+    assert sqlite_store.touch_actor("帆足さん") == "帆足"

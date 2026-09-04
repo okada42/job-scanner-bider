@@ -4,11 +4,40 @@ function showActionError(text) {
   el.textContent = text;
 }
 
+function parkedKind(slot) {
+  const reason = String(slot?.parkedReason || "").toLowerCase();
+  const status = String(slot?.status || slot?.claim_status || "").toUpperCase();
+  if (reason === "sent" || status === "COMPLETED") return "sent";
+  if (reason === "closed" || status === "CLOSED") return "closed";
+  return "skipped";
+}
+
+function fillGroup(id, headId, boxId, rows, label) {
+  const box = document.getElementById(boxId);
+  const list = document.getElementById(id);
+  const head = document.getElementById(headId);
+  box.hidden = rows.length === 0;
+  head.textContent = `${label} (${rows.length})`;
+  list.innerHTML = rows
+    .map((slot) =>
+      JobBiderCard.jobCardHtml(slot, {
+        parked: true,
+        sent: parkedKind(slot) === "sent",
+        opened: Boolean(slot.extract),
+        manual: Boolean(slot.manual),
+      })
+    )
+    .join("");
+}
+
 async function paint() {
   try {
     const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
     const slots = state.activeSlots || (state.currentJob ? [state.currentJob] : []);
     const parked = state.parkedSlots || [];
+    const sent = parked.filter((slot) => parkedKind(slot) === "sent");
+    const skipped = parked.filter((slot) => parkedKind(slot) === "skipped");
+    const closed = parked.filter((slot) => parkedKind(slot) === "closed");
     document.getElementById("profileLine").textContent = state.profileUser
       ? `Profile · ${state.profileUser}`
       : "Profile · open CrowdWorks while logged in";
@@ -25,14 +54,14 @@ async function paint() {
               ready: true,
               opened: true,
               focused: Boolean(state.focusedTabId && slot.tabId === state.focusedTabId),
+              manual: Boolean(slot.manual),
             })
           )
           .join("")
       : `<p class="meta">Fill window opens the dashboard Max active count of queued URLs. Each job has Open. Skip or close a tab to take the next queued URL.</p>`;
-    document.getElementById("parkedHead").hidden = parked.length === 0;
-    document.getElementById("parked").innerHTML = parked
-      .map((slot) => JobBiderCard.jobCardHtml(slot, { parked: true, opened: Boolean(slot.extract) }))
-      .join("");
+    fillGroup("sent", "sentHead", "sentBox", sent, "SENT");
+    fillGroup("skipped", "skippedHead", "skippedBox", skipped, "SKIPPED");
+    fillGroup("closed", "closedHead", "closedBox", closed, "CLOSED");
 
     const status = document.getElementById("biderStatus");
     if (!state.hasToken) {
@@ -44,6 +73,9 @@ async function paint() {
     } else if (state.paused) {
       status.className = "meta warn";
       status.textContent = "Bider is paused.";
+    } else if (state.loginMissing) {
+      status.className = "meta warn";
+      status.textContent = "CrowdWorksにログインしてください";
     } else {
       status.className = "meta";
       status.textContent = "Open prepares 応募画面へ, date, and 新しいテンプレートを作成. Never fills 契約金額.";
@@ -61,7 +93,9 @@ async function paint() {
       box.textContent = shown.size ? "All queued jobs are already listed above." : "No queued jobs yet.";
       return;
     }
-    box.innerHTML = jobs.map((job) => JobBiderCard.jobCardHtml(job, { opened: Boolean(job.openedOnce) })).join("");
+    box.innerHTML = jobs
+      .map((job) => JobBiderCard.jobCardHtml(job, { opened: Boolean(job.openedOnce), manual: Boolean(job.manual) }))
+      .join("");
   } catch (err) {
     document.getElementById("jobs").textContent = String(err && err.message ? err.message : err);
   }
@@ -88,7 +122,9 @@ function onSlotClick(event) {
 }
 
 document.getElementById("slots").addEventListener("click", onSlotClick);
-document.getElementById("parked").addEventListener("click", onSlotClick);
+document.getElementById("sent").addEventListener("click", onSlotClick);
+document.getElementById("skipped").addEventListener("click", onSlotClick);
+document.getElementById("closed").addEventListener("click", onSlotClick);
 document.getElementById("jobs").addEventListener("click", onSlotClick);
 document.getElementById("open").onclick = () => runQueueAction("NEXT");
 document.getElementById("skip").onclick = () => runQueueAction("SKIP");
