@@ -46,14 +46,19 @@ async function refresh() {
           : "Idle / waiting";
   }
   const scanEl = document.getElementById("scanStatus");
+  const refreshed = Number(state.lancersLastRefresh || 0);
+  const refreshAgo = refreshed
+    ? `${Math.max(0, Math.round((Date.now() - refreshed) / 60000))}m ago`
+    : "pending";
+  const refreshLine = `Lancers refresh every 20m (${refreshAgo})`;
   if (!state.scanEnabled) {
-    scanEl.textContent = "Scan off";
+    scanEl.textContent = `Scan off · ${refreshLine}`;
   } else if (state.scanStatus?.error) {
-    scanEl.textContent = `Scan error: ${state.scanStatus.error}`;
+    scanEl.textContent = `Scan error: ${state.scanStatus.error} · ${refreshLine}`;
   } else if (state.scanStatus) {
-    scanEl.textContent = `Last scan: ${state.scanStatus.found ?? 0} found, ${state.scanStatus.created ?? 0} new`;
+    scanEl.textContent = `Last scan: ${state.scanStatus.found ?? 0} found, ${state.scanStatus.created ?? 0} new · ${refreshLine}`;
   } else {
-    scanEl.textContent = "Scan on";
+    scanEl.textContent = `Scan on · ${refreshLine}`;
   }
 
   const box = document.getElementById("jobs");

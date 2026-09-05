@@ -16,6 +16,8 @@ const SCAN_ALARM = "listing-scan";
 const BIDER_ALARM = "bider-keepalive";
 const LANCERS_ALARM = "lancers-keepalive";
 const LANCERS_KEEPALIVE_MIN = 20;
+const LANCERS_KEEPALIVE_MS = LANCERS_KEEPALIVE_MIN * 60 * 1000;
+const LANCERS_HOME = "https://www.lancers.jp/";
 const LANCERS_TAB_URLS = ["https://www.lancers.jp/*", "https://lancers.jp/*"];
 const CHROME_ALARM_FLOOR_MIN = 0.5;
 
@@ -245,46 +247,88 @@ async function markLancersActivity() {
   });
 }
 
-async function hasRecentLancersActivity() {
-  const local = await chrome.storage.local.get({ lancersLastActivity: 0 });
-  return Date.now() - Number(local.lancersLastActivity || 0) < LANCERS_KEEPALIVE_MIN * 60 * 1000;
-}
-
 function isLancersWorkUrl(url) {
   return /lancers\.jp/i.test(String(url || "")) && /\/work\/(detail|propose_start)\//.test(String(url || ""));
 }
 
+async function reloadLancersTab(tabId) {
+  if (!tabId) return false;
+  try {
+    await chrome.tabs.reload(tabId);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function keepLancersSession() {
-  if (await hasRecentLancersActivity()) return;
+  await chrome.storage.local.set({ lancersLastRefresh: Date.now() });
   let tabs = [];
   try {
     tabs = await chrome.tabs.query({ url: LANCERS_TAB_URLS });
   } catch (_) {
     tabs = [];
   }
-  if (tabs.some((tab) => isLancersWorkUrl(tab.url))) return;
-  const idle = tabs.find((tab) => tab.id && !isLancersWorkUrl(tab.url));
-  if (idle?.id) {
-    try {
-      await chrome.tabs.reload(idle.id);
-    } catch (_) {
-      /* tab gone */
+  const idle = tabs.filter((tab) => tab.id && !isLancersWorkUrl(tab.url));
+  if (idle.length) {
+    for (const tab of idle) await reloadLancersTab(tab.id);
+  } else {
+    const stored = Number((await chrome.storage.local.get({ lancersKeepaliveTabId: 0 })).lancersKeepaliveTabId || 0);
+    let keep = null;
+    if (stored) {
+      try {
+        keep = await chrome.tabs.get(stored);
+      } catch (_) {
+        keep = null;
+      }
     }
-    return;
+    if (keep?.id && /lancers\.jp/i.test(keep.url || "") && !isLancersWorkUrl(keep.url)) {
+      await reloadLancersTab(keep.id);
+    } else {
+      try {
+        const tab = await chrome.tabs.create({ url: LANCERS_HOME, active: false });
+        if (tab?.id) await chrome.storage.local.set({ lancersKeepaliveTabId: tab.id });
+      } catch (_) {
+        /* fall through to fetch */
+      }
+    }
   }
   try {
-    const res = await fetch("https://www.lancers.jp/", { credentials: "include", redirect: "follow" });
+    const res = await fetch(LANCERS_HOME, { credentials: "include", redirect: "follow" });
     const html = await res.text();
     if (typeof self.parseLancersLoggedOut === "function" && self.parseLancersLoggedOut(html)) {
       await setLancersLoggedOut(true, { toast: true });
+    } else if (typeof self.parseLancersLoggedInUser === "function") {
+      const name = self.parseLancersLoggedInUser(html);
+      if (name) await rememberProfileUser(name);
     }
   } catch (_) {
     /* network */
   }
 }
 
-function scheduleLancersAlarm() {
-  chrome.alarms.create(LANCERS_ALARM, { periodInMinutes: LANCERS_KEEPALIVE_MIN });
+async function scheduleLancersAlarm() {
+  try {
+    const existing = await chrome.alarms.get(LANCERS_ALARM);
+    if (existing && Number(existing.periodInMinutes) === LANCERS_KEEPALIVE_MIN) return;
+  } catch (_) {
+    /* recreate */
+  }
+  await chrome.alarms.create(LANCERS_ALARM, {
+    delayInMinutes: LANCERS_KEEPALIVE_MIN,
+    periodInMinutes: LANCERS_KEEPALIVE_MIN,
+  });
+}
+
+async function ensureLancersRefresh() {
+  await scheduleLancersAlarm();
+  const local = await chrome.storage.local.get({ lancersLastRefresh: 0 });
+  const last = Number(local.lancersLastRefresh || 0);
+  if (!last) {
+    await chrome.storage.local.set({ lancersLastRefresh: Date.now() });
+    return;
+  }
+  if (Date.now() - last >= LANCERS_KEEPALIVE_MS) await keepLancersSession();
 }
 
 function clearStaleLoginHalt() {
@@ -1138,6 +1182,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     pingBiderSocket();
     connect();
     topUpIfNeeded();
+    ensureLancersRefresh();
   }
   if (alarm.name === SCAN_ALARM) runListingScan();
   if (alarm.name === LANCERS_ALARM) keepLancersSession();
@@ -1288,6 +1333,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         profileKey: "",
         biderDay: "",
         lancersLoggedOut: false,
+        lancersLastRefresh: 0,
       });
       const slots = Array.isArray(local.activeSlots) ? local.activeSlots : [];
       const parked = Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
@@ -1309,6 +1355,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         biderDay: local.biderDay || "",
         focusedTabId,
         lancersLoggedOut: Boolean(local.lancersLoggedOut),
+        lancersLastRefresh: Number(local.lancersLastRefresh || 0),
         scanStatus: local.scanStatus || null,
         pageExtract: local.pageExtract || local.applyDraft || slots[0]?.extract || null,
         applyDraft: local.applyDraft || slots[0]?.extract || null,
