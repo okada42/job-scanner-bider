@@ -89,10 +89,15 @@ def jobs(
     limit: int = Query(default=100, le=500),
     offset: int = Query(default=0, ge=0),
     new_only: bool = Query(default=True),
+    hide_expired: bool = Query(default=True),
 ):
-    rows = attach_user_states(list_jobs(status=status, limit=limit, offset=offset, new_only=new_only))
-    total = count_jobs(status=status, new_only=new_only)
-    return {"jobs": rows, "total": total}
+    exclude = "EXPIRED" if hide_expired and not status else None
+    rows = attach_user_states(
+        list_jobs(status=status, limit=limit, offset=offset, new_only=new_only, exclude_status=exclude)
+    )
+    total = count_jobs(status=status, new_only=new_only, exclude_status=exclude)
+    expired = count_jobs(status="EXPIRED", new_only=new_only) if exclude else 0
+    return {"jobs": rows, "total": total, "expired": expired}
 
 
 @router.get("/pending")

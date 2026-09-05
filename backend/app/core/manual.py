@@ -105,6 +105,8 @@ async def pin_manual_jobs(text: str = "", urls: list[str] | None = None) -> dict
                 "WAITING_FOR_USER",
             }:
                 patch["status"] = "QUEUED"
+                # Re-pinning yesterday's URL must make it today's job, or the day filter hides it.
+                patch["detected_at"] = now
             job = update_job(existing["id"], patch)
             bumped += 1
             add_event(job["id"], "MANUAL", {"url": job.get("url"), "priority": job.get("priority")})

@@ -20,6 +20,7 @@ JOB_STATUSES = (
     "WAITING_FOR_USER",
     "COMPLETED",
     "SKIPPED",
+    "EXPIRED",
 )
 
 _POOLER_REGIONS = (

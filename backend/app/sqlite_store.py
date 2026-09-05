@@ -428,9 +428,58 @@ def delete_source(source_id: str) -> None:
 
 _AGE_STATUSES = ("PROCESSING", "COMPLETED", "SENT_TO_BIDER", "WAITING_FOR_USER")
 _ACTIVE_STATUSES = ("SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER")
+# Bider work is per Japan calendar day: anything detected before today's midnight is stale.
+_STALE_STATUSES = ("QUEUED", *_ACTIVE_STATUSES)
 _NEW_ONLY_SQL = """and not exists (
             select 1 from job_events e where e.job_id = jobs.id and e.event = 'BASELINE'
         )"""
+# detected_at is stored as a UTC ISO string; compare on the second-precision prefix.
+_TODAY_SQL = "and substr(jobs.detected_at, 1, 19) >= ?"
+
+
+def _utc_prefix(iso: str) -> str:
+    bound = (iso or "").replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(bound)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return bound[:19]
+
+
+def day_bound() -> str:
+    from app.core.clock import local_day_start_iso
+
+    return _utc_prefix(local_day_start_iso())
+
+
+def expire_stale_bider_jobs(before_iso: str | None = None) -> list[str]:
+    """Mark Bider jobs detected before the current scanner day as EXPIRED. Returns job ids."""
+    bound = _utc_prefix(before_iso) if before_iso else day_bound()
+    conn = connect()
+    placeholders = ",".join("?" * len(_STALE_STATUSES))
+    rows = conn.execute(
+        f"select id from jobs where status in ({placeholders}) and substr(detected_at, 1, 19) < ?",
+        (*_STALE_STATUSES, bound),
+    ).fetchall()
+    ids = [str(r["id"]) for r in rows]
+    if not ids:
+        return []
+    now = now_iso()
+    with _lock:
+        for jid in ids:
+            conn.execute("update jobs set status = 'EXPIRED', updated_at = ? where id = ?", (now, jid))
+            conn.execute(
+                "insert into job_events (id, job_id, event, timestamp, metadata) values (?, ?, ?, ?, ?)",
+                (str(uuid4()), jid, "EXPIRED", now, json.dumps({"reason": "day_rollover", "before": bound})),
+            )
+        conn.commit()
+    return ids
+
+
+def claims_store_ok() -> bool:
+    return True
 _STATUS_AT_SQL = f"""CASE WHEN jobs.status IN ({",".join(repr(s) for s in _AGE_STATUSES)}) THEN (
             select e.timestamp from job_events e
             where e.job_id = jobs.id and e.event = jobs.status
@@ -438,31 +487,44 @@ _STATUS_AT_SQL = f"""CASE WHEN jobs.status IN ({",".join(repr(s) for s in _AGE_S
         ) ELSE jobs.updated_at END"""
 
 
-def count_jobs(status: str | None = None, new_only: bool = False) -> int:
+def count_jobs(status: str | None = None, new_only: bool = False, exclude_status: str | None = None) -> int:
     conn = connect()
     extra = _NEW_ONLY_SQL if new_only else ""
+    params: list = []
+    where = "1=1"
     if status:
-        row = conn.execute(f"select count(*) as n from jobs where status = ? {extra}", (status,)).fetchone()
-    else:
-        row = conn.execute(f"select count(*) as n from jobs where 1=1 {extra}").fetchone()
+        where += " and status = ?"
+        params.append(status)
+    elif exclude_status:
+        where += " and status != ?"
+        params.append(exclude_status)
+    row = conn.execute(f"select count(*) as n from jobs where {where} {extra}", params).fetchone()
     return int(row["n"] if row else 0)
 
 
-def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = False, offset: int = 0) -> list[dict]:
+def list_jobs(
+    status: str | None = None,
+    limit: int = 100,
+    new_only: bool = False,
+    offset: int = 0,
+    exclude_status: str | None = None,
+) -> list[dict]:
     conn = connect()
     extra = _NEW_ONLY_SQL if new_only else ""
     off = max(0, int(offset))
     lim = int(limit)
+    params: list = []
+    where = "1=1"
     if status:
-        rows = conn.execute(
-            f"select jobs.*, {_STATUS_AT_SQL} as status_at from jobs where status = ? {extra} order by detected_at desc limit ? offset ?",
-            (status, lim, off),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            f"select jobs.*, {_STATUS_AT_SQL} as status_at from jobs where 1=1 {extra} order by detected_at desc limit ? offset ?",
-            (lim, off),
-        ).fetchall()
+        where += " and status = ?"
+        params.append(status)
+    elif exclude_status:
+        where += " and status != ?"
+        params.append(exclude_status)
+    rows = conn.execute(
+        f"select jobs.*, {_STATUS_AT_SQL} as status_at from jobs where {where} {extra} order by detected_at desc limit ? offset ?",
+        (*params, lim, off),
+    ).fetchall()
     return [_job_row(r) for r in rows]
 
 
@@ -471,9 +533,9 @@ def active_jobs(limit: int = 10) -> list[dict]:
     placeholders = ",".join("?" * len(_ACTIVE_STATUSES))
     rows = conn.execute(
         f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
-            where status in ({placeholders})
+            where status in ({placeholders}) {_TODAY_SQL}
             order by updated_at desc limit ?""",
-        (*_ACTIVE_STATUSES, int(limit)),
+        (*_ACTIVE_STATUSES, day_bound(), int(limit)),
     ).fetchall()
     return [_job_row(r) for r in rows]
 
@@ -576,9 +638,9 @@ def queued_jobs(limit: int = 50) -> list[dict]:
     extra = _NEW_ONLY_SQL
     rows = conn.execute(
         f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
-            where status = 'QUEUED' {extra}
+            where status = 'QUEUED' {extra} {_TODAY_SQL}
             order by priority desc, detected_at desc limit ?""",
-        (int(limit),),
+        (day_bound(), int(limit)),
     ).fetchall()
     return [_job_row(r) for r in rows]
 
@@ -607,8 +669,9 @@ def jobs_failed_discord(limit: int = 50) -> list[dict]:
 def active_job_count() -> int:
     conn = connect()
     row = conn.execute(
-        """select count(*) as n from jobs where status in
-           ('SENT_TO_BIDER', 'PROCESSING', 'PROPOSAL_PAGE_READY', 'WAITING_FOR_USER')"""
+        f"""select count(*) as n from jobs where status in
+           ('SENT_TO_BIDER', 'PROCESSING', 'PROPOSAL_PAGE_READY', 'WAITING_FOR_USER') {_TODAY_SQL}""",
+        (day_bound(),),
     ).fetchone()
     return int(row["n"] if row else 0)
 
@@ -693,6 +756,7 @@ def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
         f"""select jobs.*, {_STATUS_AT_SQL} as status_at from jobs
             where jobs.status in ({pool})
             {_NEW_ONLY_SQL}
+            {_TODAY_SQL}
             and not exists (
               select 1 from bider_claims c
               where c.job_id = jobs.id and c.actor = ? and c.day = ? and c.status in ({block})
@@ -706,6 +770,7 @@ def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
             "WAITING_FOR_USER",
             "SKIPPED",
             "COMPLETED",
+            day_bound(),
             actor,
             day,
             *_CLAIM_BLOCK,

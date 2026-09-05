@@ -3,11 +3,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from app.auth import require_token
 from app.core.clock import local_day_start_iso
 from app.core.scanner import scan_source
-from app.core.scheduler import scheduler_alive
+from app.core.scheduler import last_rollover, scheduler_alive
 from app.db import PLATFORMS
 from app.platforms.registry import detect_platform
 from app.schemas import SourceCreate, SourceUpdate
 from app.store import (
+    claims_store_ok,
     delete_source,
     get_control,
     get_source,
@@ -52,6 +53,8 @@ def scanners():
     return {
         "control": control,
         "scheduler": scheduler_alive(),
+        "claims_store": claims_store_ok(),
+        "rollover": last_rollover(),
         "platforms": {p: (control.get("platforms") or {}).get(p, True) for p in PLATFORMS},
         "sources": _sources_with_found(),
     }

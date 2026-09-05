@@ -1,3 +1,4 @@
+import logging
 import re
 import threading
 import time
@@ -26,9 +27,85 @@ _BIDER_POOL = (
     "SKIPPED",
     "COMPLETED",
 )
+# Bider work is per Japan calendar day: anything detected before today's midnight is stale.
+_STALE_STATUSES = ("QUEUED", *_ACTIVE_STATUSES)
 _BASELINE_TTL_SEC = 45.0
 _baseline_lock = threading.Lock()
 _baseline_cache: tuple[float, set[str]] | None = None
+_CLAIMS_TTL_SEC = 60.0
+_claims_lock = threading.Lock()
+_claims_cache: tuple[float, bool] | None = None
+_claims_warned = False
+log = logging.getLogger("jobscanner.store")
+
+
+def day_bound() -> str:
+    from app.core.clock import local_day_start_iso
+
+    return local_day_start_iso()
+
+
+def claims_store_ok() -> bool:
+    """True when bider_claims / bider_actors exist. Cached; false means per-user state is disabled."""
+    global _claims_cache, _claims_warned
+    now = time.monotonic()
+    with _claims_lock:
+        if _claims_cache and (now - _claims_cache[0]) < _CLAIMS_TTL_SEC:
+            return _claims_cache[1]
+    ok = True
+    try:
+        sb = supabase()
+        sb.table("bider_claims").select("job_id,day").limit(1).execute()
+        sb.table("bider_actors").select("actor,day").limit(1).execute()
+    except Exception as exc:
+        ok = False
+        if not _claims_warned:
+            _claims_warned = True
+            log.warning(
+                "bider_claims / bider_actors missing; per-user Bider state is disabled. "
+                "Run backend/scripts/migrate.py. (%s)",
+                str(exc)[:200],
+            )
+    with _claims_lock:
+        _claims_cache = (now, ok)
+    return ok
+
+
+def expire_stale_bider_jobs(before_iso: str | None = None) -> list[str]:
+    """Mark Bider jobs detected before the current scanner day as EXPIRED. Returns job ids."""
+    bound = before_iso or day_bound()
+    sb = supabase()
+    ids: list[str] = []
+    start = 0
+    page = 1000
+    while True:
+        rows = (
+            sb.table("jobs")
+            .select("id")
+            .in_("status", list(_STALE_STATUSES))
+            .lt("detected_at", bound)
+            .range(start, start + page - 1)
+            .execute()
+            .data
+            or []
+        )
+        ids.extend(str(r["id"]) for r in rows if r.get("id"))
+        if len(rows) < page:
+            break
+        start += page
+    if not ids:
+        return []
+    stamp = now_iso()
+    for i in range(0, len(ids), 200):
+        chunk = ids[i : i + 200]
+        sb.table("jobs").update({"status": "EXPIRED", "updated_at": stamp}).in_("id", chunk).execute()
+        sb.table("job_events").insert(
+            [
+                {"job_id": jid, "event": "EXPIRED", "metadata": {"reason": "day_rollover", "before": bound}}
+                for jid in chunk
+            ]
+        ).execute()
+    return ids
 
 DEFAULT_CONTROL = {
     "id": 1,
@@ -94,10 +171,12 @@ def _baseline_job_ids(sb) -> set[str]:
     return ids
 
 
-def _jobs_query(sb, status: str | None, count: bool = False):
+def _jobs_query(sb, status: str | None, count: bool = False, exclude_status: str | None = None):
     q = sb.table("jobs").select("id", count="exact") if count else sb.table("jobs").select("*")
     if status:
         q = q.eq("status", status)
+    elif exclude_status:
+        q = q.neq("status", exclude_status)
     return q
 
 
@@ -239,29 +318,23 @@ def delete_source(source_id: str) -> None:
     supabase().table("scanner_sources").delete().eq("id", source_id).execute()
 
 
-def count_jobs(status: str | None = None, new_only: bool = False) -> int:
+def count_jobs(status: str | None = None, new_only: bool = False, exclude_status: str | None = None) -> int:
     try:
         sb = supabase()
-        res = _jobs_query(sb, status, count=True).limit(1).execute()
+        res = _jobs_query(sb, status, count=True, exclude_status=exclude_status).limit(1).execute()
         total = int(res.count or 0)
         if not new_only:
             return total
         baseline = set(_baseline_job_ids(sb))
-        if not status:
+        if not status and not exclude_status:
             return max(0, total - len(baseline))
         counted = 0
         start = 0
         page = 1000
         while True:
-            rows = (
-                sb.table("jobs")
-                .select("id")
-                .eq("status", status)
-                .range(start, start + page - 1)
-                .execute()
-                .data
-                or []
-            )
+            q = sb.table("jobs").select("id")
+            q = q.eq("status", status) if status else q.neq("status", exclude_status)
+            rows = q.range(start, start + page - 1).execute().data or []
             counted += sum(1 for row in rows if str(row.get("id") or "") not in baseline)
             if len(rows) < page:
                 break
@@ -271,7 +344,13 @@ def count_jobs(status: str | None = None, new_only: bool = False) -> int:
         return 0
 
 
-def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = False, offset: int = 0) -> list[dict]:
+def list_jobs(
+    status: str | None = None,
+    limit: int = 100,
+    new_only: bool = False,
+    offset: int = 0,
+    exclude_status: str | None = None,
+) -> list[dict]:
     try:
         sb = supabase()
         baseline = _baseline_job_ids(sb) if new_only else set()
@@ -282,7 +361,7 @@ def list_jobs(status: str | None = None, limit: int = 100, new_only: bool = Fals
         start = 0
         page = 100
         while len(collected) < lim:
-            q = _jobs_query(sb, status).order("detected_at", desc=True)
+            q = _jobs_query(sb, status, exclude_status=exclude_status).order("detected_at", desc=True)
             batch = q.range(start, start + page - 1).execute().data or []
             if not batch:
                 break
@@ -310,6 +389,7 @@ def active_jobs(limit: int = 10) -> list[dict]:
             sb.table("jobs")
             .select("*")
             .in_("status", list(_ACTIVE_STATUSES))
+            .gte("detected_at", day_bound())
             .order("updated_at", desc=True)
             .limit(int(limit))
             .execute()
@@ -425,6 +505,7 @@ def queued_jobs(limit: int = 50) -> list[dict]:
             .table("jobs")
             .select("*")
             .eq("status", "QUEUED")
+            .gte("detected_at", day_bound())
             .order("priority", desc=True)
             .order("detected_at", desc=True)
             .limit(max(int(limit), 50))
@@ -470,6 +551,7 @@ def active_job_count() -> int:
             .table("jobs")
             .select("id", count="exact")
             .in_("status", ["SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER"])
+            .gte("detected_at", day_bound())
             .execute()
         )
         return res.count or 0
@@ -513,7 +595,8 @@ def upsert_claim(job_id: str, actor: str, status: str, url: str | None = None) -
         payload.pop("day", None)
         try:
             supabase().table("bider_claims").upsert(payload).execute()
-        except Exception:
+        except Exception as exc:
+            log.warning("upsert_claim failed job=%s actor=%s: %s", job_id, actor, str(exc)[:200])
             return
 
 
@@ -587,6 +670,7 @@ def queued_for_actor(actor: str, limit: int = 50) -> list[dict]:
             sb.table("jobs")
             .select("*")
             .in_("status", list(_BIDER_POOL))
+            .gte("detected_at", day_bound())
             .order("priority", desc=True)
             .order("detected_at", desc=True)
             .limit(200)

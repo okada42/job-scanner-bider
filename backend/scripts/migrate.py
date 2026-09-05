@@ -36,6 +36,8 @@ def schema_ready() -> bool:
         sb.table("scanner_sources").select("id").limit(1).execute()
         sb.table("jobs").select("id").limit(1).execute()
         sb.table("job_events").select("id").limit(1).execute()
+        sb.table("bider_claims").select("job_id,actor,status,day").limit(1).execute()
+        sb.table("bider_actors").select("actor,day").limit(1).execute()
         return True
     except Exception:
         return False
