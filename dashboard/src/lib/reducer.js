@@ -6,6 +6,7 @@ export const initialState = {
   scanners: null,
   jobs: [],
   jobsTotal: 0,
+  jobsExpired: 0,
   page: 1,
   pageSize: DEFAULT_PAGE_SIZE,
   current: null,
@@ -25,7 +26,8 @@ export function reducer(state, action) {
       return state.updating === action.updating ? state : { ...state, updating: action.updating };
     case "jobs": {
       const sameJobs = sameJson(state.jobs, action.jobs);
-      const sameTotal = state.jobsTotal === action.total;
+      const expired = Number(action.expired) || 0;
+      const sameTotal = state.jobsTotal === action.total && state.jobsExpired === expired;
       if (sameJobs && sameTotal) {
         if (!state.updating && state.loaded) return state;
         return { ...state, updating: false, loaded: true };
@@ -34,6 +36,7 @@ export function reducer(state, action) {
         ...state,
         jobs: action.jobs,
         jobsTotal: action.total,
+        jobsExpired: expired,
         updating: false,
         loaded: true,
       };

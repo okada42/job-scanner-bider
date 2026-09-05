@@ -26,14 +26,14 @@ export default function App() {
     const slow = setTimeout(() => dispatch({ type: "updating", updating: true }), 350);
     try {
       const offset = (Math.max(1, page) - 1) * pageSize;
-      const { jobs, total } = await fetchJobsPage({ limit: pageSize, offset });
+      const { jobs, total, expired } = await fetchJobsPage({ limit: pageSize, offset });
       const pageCount = Math.max(1, Math.ceil((total || 0) / pageSize));
       if (page > pageCount) {
         dispatch({ type: "page", page: pageCount });
         const again = await fetchJobsPage({ limit: pageSize, offset: (pageCount - 1) * pageSize });
-        dispatch({ type: "jobs", jobs: again.jobs, total: again.total });
+        dispatch({ type: "jobs", jobs: again.jobs, total: again.total, expired: again.expired });
       } else {
-        dispatch({ type: "jobs", jobs, total });
+        dispatch({ type: "jobs", jobs, total, expired });
       }
     } finally {
       clearTimeout(slow);
@@ -282,6 +282,7 @@ export default function App() {
         <JobsPanel
           jobs={state.jobs}
           total={state.jobsTotal}
+          expired={state.jobsExpired}
           page={state.page}
           pageSize={state.pageSize}
           loaded={state.loaded}

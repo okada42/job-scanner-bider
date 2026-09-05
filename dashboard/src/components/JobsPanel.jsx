@@ -6,6 +6,7 @@ import { JobRow } from "./JobRow";
 export const JobsPanel = memo(function JobsPanel({
   jobs,
   total,
+  expired = 0,
   page,
   pageSize,
   loaded,
@@ -38,7 +39,11 @@ export const JobsPanel = memo(function JobsPanel({
       <div className="panel-head">
         <div>
           <h2>Jobs</h2>
-          <p className="muted">Only new listings after the first crawl. Baseline jobs stay hidden.</p>
+          <p className="muted">
+            Only new listings after the first crawl. Baseline jobs stay hidden. Bider status resets at
+            midnight Japan time
+            {expired > 0 ? ` (${expired} expired from earlier days hidden).` : "."}
+          </p>
         </div>
         <div className="pager-sizes" role="group" aria-label="Rows per page">
           {PAGE_SIZES.map((size) => (

@@ -19,10 +19,11 @@ export function setToken(token) {
 }
 
 export function unwrapJobs(data) {
-  if (Array.isArray(data)) return { jobs: data, total: data.length };
+  if (Array.isArray(data)) return { jobs: data, total: data.length, expired: 0 };
   return {
     jobs: Array.isArray(data?.jobs) ? data.jobs : [],
     total: Number(data?.total) || 0,
+    expired: Number(data?.expired) || 0,
   };
 }
 
