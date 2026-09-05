@@ -1,5 +1,6 @@
 const APPLY_LABELS = ["提案する", "この仕事に提案"];
 const FINAL_LABELS = ["提案を送信", "送信する", "この内容で提案", "確認画面へ", "この内容で送信"];
+const DETAIL_SUB_RE = /続きを読む|詳細を書く|^詳細$|もっと見る|折りたたむ/;
 
 function visible(el) {
   if (!el) return false;
@@ -92,8 +93,24 @@ function findLabeledControl(titles, selector) {
   return null;
 }
 
+function isDetailSubButton(el) {
+  if (!el) return false;
+  const t = labelOf(el);
+  if (DETAIL_SUB_RE.test(t)) return true;
+  const row = el.closest("tr, dl, li, .form-item, .row");
+  const head = compact((row && (row.querySelector("th, dt, .label")?.innerText || "")) || "");
+  return head === "詳細" || head.startsWith("詳細");
+}
+
+function safeClick(el) {
+  if (!el || isDetailSubButton(el) || FINAL_LABELS.some((f) => labelOf(el).includes(f))) return false;
+  el.click();
+  return true;
+}
+
 function findApplyControl() {
-  const buttons = visibleButtons();
+  if (isProposalPath()) return null;
+  const buttons = visibleButtons().filter((el) => !isDetailSubButton(el));
   const exact = buttons.find((el) => {
     const t = labelOf(el);
     return (t === "提案する" || t.startsWith("提案する")) && !FINAL_LABELS.some((f) => t.includes(f));
@@ -214,8 +231,12 @@ function isLoggedOut() {
   return Boolean(login);
 }
 
+function isProposalPath() {
+  return /propose_start|\/proposal|offer|entry/.test(location.pathname);
+}
+
 function isProposalPage() {
-  if (/propose_start|\/proposal|offer|entry/.test(location.pathname)) return true;
+  if (isProposalPath()) return true;
   const blob = document.body ? document.body.innerText.slice(0, 6000) : "";
   if (/提案文/.test(blob) && /完了予定日/.test(blob)) return true;
   if (/完了予定日/.test(blob) && /契約金額/.test(blob) && !findApplyControl()) return true;
@@ -359,7 +380,7 @@ async function prepare(msg) {
   const apply = findApplyControl();
   if (apply) {
     await randomWait();
-    apply.click();
+    if (!safeClick(apply)) return fillApplication(extract);
     const start = Date.now();
     while (Date.now() - start < 8000) {
       await sleep(300);
