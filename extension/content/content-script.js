@@ -25,11 +25,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return;
   }
-  if (msg.type === "LANCERS_SESSION_CHECK") {
-    const loggedOut = platform && platform.name === "lancers" && typeof platform.isLoggedOut === "function" && platform.isLoggedOut();
-    sendResponse({ ok: true, loggedOut: Boolean(loggedOut), name: platform?.extractLoggedInUser?.() || "" });
-    return;
-  }
   if (!platform) {
     sendResponse({ ok: false, error: "no_platform" });
     return;
@@ -102,36 +97,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const platform = window.JobBiderPlatform;
   if (!platform) return;
 
-  function reportUser(tries) {
+  // Lancers: the header renders after load, so re-check a few times before calling it logged out.
+  function reportSession(tries) {
+    if (platform.name !== "lancers" || typeof platform.isLoggedOut !== "function") return;
     try {
-      if (platform.name === "lancers" && typeof platform.isLoggedOut === "function" && platform.isLoggedOut()) {
-        if (tries > 0) {
-          setTimeout(() => reportUser(tries - 1), 700);
-          return;
-        }
-        chrome.runtime.sendMessage({ type: "LANCERS_LOGGED_OUT" });
-        return;
-      }
-      if (typeof platform.extractLoggedInUser === "function") {
-        const name = platform.extractLoggedInUser();
-        if (name) {
-          chrome.runtime.sendMessage({ type: "PROFILE_USER", name, platform: platform.name });
-          if (platform.name === "lancers") chrome.runtime.sendMessage({ type: "LANCERS_ACTIVITY" });
-          return;
-        }
-      }
+      if (!platform.isLoggedOut()) return;
     } catch (_) {
-      /* ignore */
+      return;
     }
     if (tries > 0) {
-      setTimeout(() => reportUser(tries - 1), 700);
+      setTimeout(() => reportSession(tries - 1), 250);
+      return;
     }
+    chrome.runtime.sendMessage({ type: "LANCERS_LOGGED_OUT" });
   }
-  reportUser(5);
-
-  if (/lancers\.jp/i.test(location.hostname) && /\/work\/(detail|propose_start)\//.test(location.pathname)) {
-    chrome.runtime.sendMessage({ type: "LANCERS_ACTIVITY" });
-  }
+  reportSession(4);
 
   if (typeof platform.extractPage !== "function") return;
   if (platform.isProposalPage && platform.isProposalPage()) return;

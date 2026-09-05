@@ -14,10 +14,7 @@ const DEFAULTS = {
 
 const SCAN_ALARM = "listing-scan";
 const BIDER_ALARM = "bider-keepalive";
-const LANCERS_ALARM = "lancers-keepalive";
-const LANCERS_KEEPALIVE_MIN = 20;
-const LANCERS_KEEPALIVE_MS = LANCERS_KEEPALIVE_MIN * 60 * 1000;
-const LANCERS_HOME = "https://www.lancers.jp/";
+const LEGACY_LANCERS_ALARM = "lancers-keepalive";
 const LANCERS_TAB_URLS = ["https://www.lancers.jp/*", "https://lancers.jp/*"];
 const CHROME_ALARM_FLOOR_MIN = 0.5;
 
@@ -39,24 +36,24 @@ async function cfg() {
   return merged;
 }
 
-async function rememberProfileUser(name) {
-  const value = String(name || "").replace(/\s+/g, " ").trim().replace(/さん$/, "");
-  if (!value || value.length > 40 || /login|会員|ログイン/i.test(value)) return "";
-  await chrome.storage.local.set({ profileUser: value });
-  registerActor();
+function cleanActorName(name) {
+  return String(name || "").replace(/\s+/g, " ").trim().replace(/さん$/, "").slice(0, 40);
+}
+
+// The user types their name in Options once per Chrome profile. Nothing is scraped from the platforms.
+async function getActor() {
+  const local = await chrome.storage.local.get({ actorName: "" });
+  return cleanActorName(local.actorName);
+}
+
+async function setActorName(name) {
+  const value = cleanActorName(name);
+  await chrome.storage.local.set({ actorName: value });
+  if (value) registerActor();
   return value;
 }
 
-async function getActor() {
-  const local = await chrome.storage.local.get({ profileUser: "", profileKey: "" });
-  if (local.profileUser) return local.profileUser;
-  let key = local.profileKey;
-  if (!key) {
-    key = `ext-${Math.random().toString(36).slice(2, 10)}`;
-    await chrome.storage.local.set({ profileKey: key });
-  }
-  return key;
-}
+const NAME_MISSING = "Enter your name in Options first (right-click the extension → Options).";
 
 let ws = null;
 let scanning = false;
@@ -243,89 +240,28 @@ async function setLancersLoggedOut(loggedOut, { toast } = {}) {
   if (loggedOut && toast && !prev) await toastLancers("Lancersにログインしてください");
 }
 
-async function markLancersActivity() {
-  await chrome.storage.local.set({
-    lancersLastActivity: Date.now(),
-    lancersLoggedOut: false,
-    loginMissing: false,
-  });
-}
-
-function isLancersUrl(url) {
-  return /lancers\.jp/i.test(String(url || ""));
-}
-
-function isLancersWorkUrl(url) {
-  return isLancersUrl(url) && /\/work\/(detail|propose_start)\//.test(String(url || ""));
-}
-
-async function rememberSelectedLancersTab(tabId, url) {
-  if (!tabId || !isLancersUrl(url)) return;
-  await chrome.storage.local.set({ lancersSelectedTabId: tabId });
-}
-
-async function deferLancersRefresh() {
-  await chrome.storage.local.set({ lancersLastRefresh: Date.now() });
-  await scheduleLancersAlarm({ reset: true });
-}
-
-async function reloadLancersTab(tabId) {
-  if (!tabId) return false;
-  try {
-    await chrome.tabs.reload(tabId);
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
-async function keepLancersSession() {
-  const local = await chrome.storage.local.get({ lancersSelectedTabId: 0 });
-  const tabId = Number(local.lancersSelectedTabId || 0);
-  await chrome.storage.local.set({ lancersLastRefresh: Date.now() });
-  if (!tabId) return;
-  let tab = null;
-  try {
-    tab = await chrome.tabs.get(tabId);
-  } catch (_) {
-    return;
-  }
-  if (!tab?.id || !isLancersUrl(tab.url) || isLancersWorkUrl(tab.url)) return;
-  await reloadLancersTab(tab.id);
-}
-
-async function scheduleLancersAlarm({ reset } = {}) {
-  if (!reset) {
-    try {
-      const existing = await chrome.alarms.get(LANCERS_ALARM);
-      if (existing && Number(existing.periodInMinutes) === LANCERS_KEEPALIVE_MIN) return;
-    } catch (_) {
-      /* recreate */
-    }
-  }
-  await chrome.alarms.create(LANCERS_ALARM, {
-    delayInMinutes: LANCERS_KEEPALIVE_MIN,
-    periodInMinutes: LANCERS_KEEPALIVE_MIN,
-  });
-}
-
-async function ensureLancersRefresh() {
-  await scheduleLancersAlarm();
-  const local = await chrome.storage.local.get({ lancersLastRefresh: 0 });
-  const last = Number(local.lancersLastRefresh || 0);
-  if (!last) {
-    await chrome.storage.local.set({ lancersLastRefresh: Date.now() });
-    return;
-  }
-  if (Date.now() - last >= LANCERS_KEEPALIVE_MS) await keepLancersSession();
-}
-
 function clearStaleLoginHalt() {
   chrome.storage.local.set({ loginMissing: false });
 }
 
+// Older builds scheduled a 20-minute Lancers reload; drop it and its state on upgrade.
+function dropLegacyLancersRefresh() {
+  try {
+    chrome.alarms.clear(LEGACY_LANCERS_ALARM);
+  } catch (_) {
+    /* no alarm */
+  }
+  chrome.storage.local.remove([
+    "lancersLastRefresh",
+    "lancersSelectedTabId",
+    "lancersKeepaliveTabId",
+    "lancersLastActivity",
+    "profileUser",
+    "profileKey",
+  ]);
+}
+
 async function onJobAlert(job) {
-  if (isLancersJob(job)) await deferLancersRefresh();
   const settings = await cfg();
   if (!settings.applyEnabled || settings.paused) return;
   if (await skipLancersOpen(job)) return;
@@ -688,7 +624,6 @@ async function reviveSlots(slots) {
 
 async function openPreparedTab(job, extract, focus) {
   if (await skipLancersOpen(job)) return null;
-  if (isLancersJob(job)) await deferLancersRefresh();
   const tab = await chrome.tabs.create({ url: job.url, active: Boolean(focus) });
   await markProcessing(job);
   await markOpened(job, extract);
@@ -724,6 +659,9 @@ async function fillWindow() {
   }
   if (c.paused) {
     return { ok: false, error: "Bider is paused. Click Resume in the popup." };
+  }
+  if (!(await getActor())) {
+    return { ok: false, error: NAME_MISSING };
   }
   if (filling) {
     fillAgain = true;
@@ -1010,6 +948,11 @@ async function runApplyFlow(tabId, draft, jobId) {
 }
 
 async function setApplyEnabled(enabled) {
+  if (enabled && !(await getActor())) {
+    await chrome.storage.sync.set({ applyEnabled: false, running: false });
+    disconnectWs();
+    return { ok: false, error: NAME_MISSING };
+  }
   const patch = { applyEnabled: Boolean(enabled), running: Boolean(enabled) };
   if (enabled) patch.paused = false;
   await chrome.storage.sync.set(patch);
@@ -1069,9 +1012,6 @@ async function runListingScan() {
         if (!res.ok) throw new Error(`HTTP ${res.status} for ${source.platform}`);
         const html = await res.text();
         if (source.platform === "lancers") {
-          const lancersUser =
-            typeof self.parseLancersLoggedInUser === "function" ? self.parseLancersLoggedInUser(html) : "";
-          if (lancersUser) await rememberProfileUser(lancersUser);
           const loggedOut =
             typeof self.parseLancersLoggedOut === "function" ? self.parseLancersLoggedOut(html) : false;
           if (loggedOut) {
@@ -1079,9 +1019,6 @@ async function runListingScan() {
             lastRuns[source.id] = Date.now();
             continue;
           }
-        } else {
-          const user = typeof self.parseLoggedInUser === "function" ? self.parseLoggedInUser(html) : "";
-          if (user) await rememberProfileUser(user);
         }
         const jobs = parseListingJobs(html, source.platform);
         const actor = await getActor();
@@ -1092,9 +1029,6 @@ async function runListingScan() {
         found += result.found ?? jobs.length;
         created += result.created ?? 0;
         queued += result.queued ?? 0;
-        if (source.platform === "lancers" && ((result.created ?? 0) > 0 || (result.queued ?? 0) > 0)) {
-          await deferLancersRefresh();
-        }
         lastRuns[source.id] = Date.now();
       } catch (err) {
         lastError = String(err && err.message ? err.message : err).slice(0, 300);
@@ -1154,7 +1088,7 @@ async function testConnection() {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
-  scheduleLancersAlarm();
+  dropLegacyLancersRefresh();
   clearStaleLoginHalt();
   migrateLocalhostIfUnreachable();
   scheduleScanAlarm();
@@ -1164,7 +1098,7 @@ chrome.runtime.onStartup.addListener(() => {
   migrateLocalhostIfUnreachable();
   scheduleScanAlarm();
   chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
-  scheduleLancersAlarm();
+  dropLegacyLancersRefresh();
   clearStaleLoginHalt();
   connect();
 });
@@ -1174,10 +1108,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     pingBiderSocket();
     connect();
     topUpIfNeeded();
-    ensureLancersRefresh();
   }
   if (alarm.name === SCAN_ALARM) runListingScan();
-  if (alarm.name === LANCERS_ALARM) keepLancersSession();
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -1204,6 +1136,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     } else if (msg.type === "CONFIG_CHANGED") {
       await migrateLocalhostIfUnreachable();
       await scheduleScanAlarm();
+      registerActor();
       const c = await cfg();
       if (c.scanEnabled) await runListingScan();
       if (c.applyEnabled && !c.paused) await connect();
@@ -1269,22 +1202,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return;
     } else if (msg.type === "PAGE_EXTRACT") {
       await rememberExtract(msg.extract, _sender.tab?.id);
-      if (isLancersWorkUrl(_sender.tab?.url) || isLancersJob({ url: msg.extract?.url })) {
-        await deferLancersRefresh();
-      }
       sendResponse({ ok: true });
     } else if (msg.type === "LOGIN_MISSING") {
       sendResponse({ ok: true });
     } else if (msg.type === "LANCERS_LOGGED_OUT") {
       await setLancersLoggedOut(true, { toast: false });
       sendResponse({ ok: true });
-    } else if (msg.type === "LANCERS_ACTIVITY") {
-      await deferLancersRefresh();
-      sendResponse({ ok: true });
-    } else if (msg.type === "PROFILE_USER") {
-      await rememberProfileUser(msg.name);
-      if (String(msg.platform || "").toLowerCase() === "lancers") await markLancersActivity();
-      sendResponse({ ok: true });
+    } else if (msg.type === "SET_ACTOR") {
+      const actorName = await setActorName(msg.name);
+      sendResponse({ ok: true, actorName });
     } else if (msg.type === "LIST_JOBS") {
       try {
         const jobs = await listBiderJobs();
@@ -1321,11 +1247,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         applyDraft: null,
         activeSlots: [],
         parkedSlots: [],
-        profileUser: "",
-        profileKey: "",
+        actorName: "",
         biderDay: "",
         lancersLoggedOut: false,
-        lancersLastRefresh: 0,
       });
       const slots = Array.isArray(local.activeSlots) ? local.activeSlots : [];
       const parked = Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
@@ -1342,12 +1266,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         activeSlots: slots,
         parkedSlots: parked,
         hasToken: Boolean(c.token),
-        profileUser: local.profileUser || "",
-        profileKey: local.profileKey || "",
+        actorName: cleanActorName(local.actorName),
         biderDay: local.biderDay || "",
         focusedTabId,
         lancersLoggedOut: Boolean(local.lancersLoggedOut),
-        lancersLastRefresh: Number(local.lancersLastRefresh || 0),
         scanStatus: local.scanStatus || null,
         pageExtract: local.pageExtract || local.applyDraft || slots[0]?.extract || null,
         applyDraft: local.applyDraft || slots[0]?.extract || null,
@@ -1357,18 +1279,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-chrome.tabs.onActivated.addListener((info) => {
-  chrome.tabs.get(info.tabId).then((tab) => rememberSelectedLancersTab(tab.id, tab.url)).catch(() => {});
-});
-
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   const url = String(info.url || tab?.url || "");
-  if (url && (info.url || info.status === "complete")) {
-    chrome.tabs.query({ active: true }).then((active) => {
-      if (active.some((row) => row.id === tabId)) rememberSelectedLancersTab(tabId, url);
-    });
-    if (isLancersWorkUrl(url)) deferLancersRefresh();
-  }
   if (!url || (!info.url && info.status !== "complete")) return;
   if (!/crowdworks\.jp\/proposals\/\d+/i.test(url)) return;
   getSlots().then((slots) => {
@@ -1378,12 +1290,6 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  chrome.storage.local.get({ lancersSelectedTabId: 0, lancersKeepaliveTabId: 0 }).then((local) => {
-    const patch = {};
-    if (Number(local.lancersSelectedTabId) === tabId) patch.lancersSelectedTabId = 0;
-    if (Number(local.lancersKeepaliveTabId) === tabId) patch.lancersKeepaliveTabId = 0;
-    if (Object.keys(patch).length) chrome.storage.local.set(patch);
-  });
   if (closingByUs.has(tabId)) {
     closingByUs.delete(tabId);
     return;
@@ -1396,10 +1302,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 migrateLocalhostIfUnreachable();
 scheduleScanAlarm();
-scheduleLancersAlarm();
+dropLegacyLancersRefresh();
 clearStaleLoginHalt();
-chrome.tabs.query({ active: true }).then((tabs) => {
-  for (const tab of tabs || []) rememberSelectedLancersTab(tab.id, tab.url);
-});
 chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
 connect();
