@@ -84,7 +84,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 (function watchUserApply() {
-  const FINAL = /送信する|提出する|応募を送信|この内容で応募|^応募する$|提案を送信/;
+  const FINAL = /送信する|提出する|応募を送信|この内容で応募|^応募する$|提案を送信|この内容で提案/;
   document.addEventListener(
     "click",
     (event) => {

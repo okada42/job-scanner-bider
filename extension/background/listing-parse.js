@@ -203,30 +203,46 @@ function definitionValue(html, labels) {
 function parseLancersDetail(html) {
   const page = String(html || "");
   const text = stripTags(page);
-  const h1 = page.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-  const title = h1 ? stripTags(h1[1]).replace(/\s*[-|｜].*$/, "").trim() : "";
+  const h1 = page.match(/<h1[^>]*c-heading[^>]*>([\s\S]*?)<\/h1>/i) || page.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  let title = "";
+  if (h1) {
+    const inner = h1[1]
+      .replace(/<span[^>]*c-heading__sub[\s\S]*?<\/span>/gi, "")
+      .replace(/<span[^>]*c-badge[\s\S]*?<\/span>/gi, "");
+    title = stripTags(inner).replace(/\s+/g, " ").trim();
+  }
   let details = "";
-  for (const heading of ["依頼概要", "仕事の詳細", "募集内容"]) {
+  for (const heading of ["依頼詳細", "依頼概要", "仕事の詳細", "募集内容"]) {
     const at = page.search(heading);
     if (at < 0) continue;
     const slice = page.slice(at, at + 14000);
     details = stripTags(slice)
       .replace(new RegExp(`^${heading}\\s*`), "")
+      .replace(/続きを読む/g, "")
       .trim();
     if (details.length > 20) break;
   }
   const clientRaw =
-    definitionValue(page, ["依頼主", "クライアント"]) || labeledFromText(text, ["依頼主", "クライアント"]);
+    definitionValue(page, ["クライアント名", "依頼主", "クライアント"]) ||
+    labeledFromText(text, ["クライアント名", "依頼主", "クライアント"]);
+  const clientMatch = text.match(/([^\n]{1,20})\s*\(([a-zA-Z0-9_.-]{2,40})\)/);
   const client =
-    clientRaw && clientRaw.length <= 40 && !/業種|予算|ログイン/.test(clientRaw) ? clientRaw : "";
+    clientRaw && clientRaw.length <= 60 && !/業種|予算|ログイン/.test(clientRaw)
+      ? clientRaw
+      : clientMatch
+        ? `${clientMatch[1].trim()} (${clientMatch[2]})`
+        : "";
+  const projectBudget = text.match(/プロジェクト\s*[~～〜]\s*([\d,]+円)/);
   const budget =
-    definitionValue(page, ["提示した予算", "予算", "報酬", "希望金額"]) ||
-    labeledFromText(text, ["提示した予算", "予算", "報酬", "希望金額"]);
+    definitionValue(page, ["依頼予算", "提示した予算", "予算", "報酬", "希望金額"]) ||
+    labeledFromText(text, ["依頼予算", "提示した予算", "予算", "報酬", "希望金額"]) ||
+    (projectBudget ? `~ ${projectBudget[1]}` : "");
   const postedLabel =
-    definitionValue(page, ["掲載日", "募集開始"]) || labeledFromText(text, ["掲載日", "募集開始"]);
+    definitionValue(page, ["募集開始日時", "掲載日", "募集開始"]) ||
+    labeledFromText(text, ["募集開始日時", "掲載日", "募集開始"]);
   const deadline =
-    definitionValue(page, ["締切", "募集期間", "提案期限"]) ||
-    labeledFromText(text, ["締切", "募集期間", "提案期限"]);
+    definitionValue(page, ["募集締切日時", "締切", "募集期間", "提案期限"]) ||
+    labeledFromText(text, ["募集締切日時", "締切", "募集期間", "提案期限"]);
   const dates = globalThis.JobBiderDates;
   const postedAt = dates && postedLabel ? dates.parseJpDate(postedLabel) : null;
   return {

@@ -78,7 +78,8 @@ async function paint() {
       status.textContent = "Lancersにログインしてください";
     } else {
       status.className = "meta";
-      status.textContent = "Open prepares 応募画面へ, date, and 新しいテンプレートを作成. Never fills 契約金額.";
+      status.textContent =
+        "CrowdWorks: 応募画面へ + date. Lancers: 提案する, 見積もりは ., 自己PRに依頼詳細, 完了予定日 +1 month. Never fills 契約金額.";
     }
 
     const box = document.getElementById("jobs");
