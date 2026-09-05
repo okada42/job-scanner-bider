@@ -251,8 +251,22 @@ async function markLancersActivity() {
   });
 }
 
+function isLancersUrl(url) {
+  return /lancers\.jp/i.test(String(url || ""));
+}
+
 function isLancersWorkUrl(url) {
-  return /lancers\.jp/i.test(String(url || "")) && /\/work\/(detail|propose_start)\//.test(String(url || ""));
+  return isLancersUrl(url) && /\/work\/(detail|propose_start)\//.test(String(url || ""));
+}
+
+async function rememberSelectedLancersTab(tabId, url) {
+  if (!tabId || !isLancersUrl(url)) return;
+  await chrome.storage.local.set({ lancersSelectedTabId: tabId });
+}
+
+async function deferLancersRefresh() {
+  await chrome.storage.local.set({ lancersLastRefresh: Date.now() });
+  await scheduleLancersAlarm({ reset: true });
 }
 
 async function reloadLancersTab(tabId) {
@@ -266,59 +280,28 @@ async function reloadLancersTab(tabId) {
 }
 
 async function keepLancersSession() {
+  const local = await chrome.storage.local.get({ lancersSelectedTabId: 0 });
+  const tabId = Number(local.lancersSelectedTabId || 0);
   await chrome.storage.local.set({ lancersLastRefresh: Date.now() });
-  let tabs = [];
+  if (!tabId) return;
+  let tab = null;
   try {
-    tabs = await chrome.tabs.query({ url: LANCERS_TAB_URLS });
+    tab = await chrome.tabs.get(tabId);
   } catch (_) {
-    tabs = [];
+    return;
   }
-  const pinned = tabs.filter((tab) => tab.id && tab.pinned && !isLancersWorkUrl(tab.url));
-  const idle = tabs.filter((tab) => tab.id && !isLancersWorkUrl(tab.url));
-  const targets = pinned.length ? pinned : idle;
-  if (targets.length) {
-    for (const tab of targets) await reloadLancersTab(tab.id);
-  } else {
-    const stored = Number((await chrome.storage.local.get({ lancersKeepaliveTabId: 0 })).lancersKeepaliveTabId || 0);
-    let keep = null;
-    if (stored) {
-      try {
-        keep = await chrome.tabs.get(stored);
-      } catch (_) {
-        keep = null;
-      }
-    }
-    if (keep?.id && /lancers\.jp/i.test(keep.url || "") && !isLancersWorkUrl(keep.url)) {
-      await reloadLancersTab(keep.id);
-    } else {
-      try {
-        const tab = await chrome.tabs.create({ url: LANCERS_HOME, active: false });
-        if (tab?.id) await chrome.storage.local.set({ lancersKeepaliveTabId: tab.id });
-      } catch (_) {
-        /* fall through to fetch */
-      }
-    }
-  }
-  try {
-    const res = await fetch(LANCERS_HOME, { credentials: "include", redirect: "follow" });
-    const html = await res.text();
-    if (typeof self.parseLancersLoggedOut === "function" && self.parseLancersLoggedOut(html)) {
-      await setLancersLoggedOut(true, { toast: true });
-    } else if (typeof self.parseLancersLoggedInUser === "function") {
-      const name = self.parseLancersLoggedInUser(html);
-      if (name) await rememberProfileUser(name);
-    }
-  } catch (_) {
-    /* network */
-  }
+  if (!tab?.id || !isLancersUrl(tab.url) || isLancersWorkUrl(tab.url)) return;
+  await reloadLancersTab(tab.id);
 }
 
-async function scheduleLancersAlarm() {
-  try {
-    const existing = await chrome.alarms.get(LANCERS_ALARM);
-    if (existing && Number(existing.periodInMinutes) === LANCERS_KEEPALIVE_MIN) return;
-  } catch (_) {
-    /* recreate */
+async function scheduleLancersAlarm({ reset } = {}) {
+  if (!reset) {
+    try {
+      const existing = await chrome.alarms.get(LANCERS_ALARM);
+      if (existing && Number(existing.periodInMinutes) === LANCERS_KEEPALIVE_MIN) return;
+    } catch (_) {
+      /* recreate */
+    }
   }
   await chrome.alarms.create(LANCERS_ALARM, {
     delayInMinutes: LANCERS_KEEPALIVE_MIN,
@@ -342,6 +325,7 @@ function clearStaleLoginHalt() {
 }
 
 async function onJobAlert(job) {
+  if (isLancersJob(job)) await deferLancersRefresh();
   const settings = await cfg();
   if (!settings.applyEnabled || settings.paused) return;
   if (await skipLancersOpen(job)) return;
@@ -704,7 +688,7 @@ async function reviveSlots(slots) {
 
 async function openPreparedTab(job, extract, focus) {
   if (await skipLancersOpen(job)) return null;
-  if (isLancersJob(job)) await markLancersActivity();
+  if (isLancersJob(job)) await deferLancersRefresh();
   const tab = await chrome.tabs.create({ url: job.url, active: Boolean(focus) });
   await markProcessing(job);
   await markOpened(job, extract);
@@ -1095,7 +1079,6 @@ async function runListingScan() {
             lastRuns[source.id] = Date.now();
             continue;
           }
-          await markLancersActivity();
         } else {
           const user = typeof self.parseLoggedInUser === "function" ? self.parseLoggedInUser(html) : "";
           if (user) await rememberProfileUser(user);
@@ -1109,6 +1092,9 @@ async function runListingScan() {
         found += result.found ?? jobs.length;
         created += result.created ?? 0;
         queued += result.queued ?? 0;
+        if (source.platform === "lancers" && ((result.created ?? 0) > 0 || (result.queued ?? 0) > 0)) {
+          await deferLancersRefresh();
+        }
         lastRuns[source.id] = Date.now();
       } catch (err) {
         lastError = String(err && err.message ? err.message : err).slice(0, 300);
@@ -1284,7 +1270,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     } else if (msg.type === "PAGE_EXTRACT") {
       await rememberExtract(msg.extract, _sender.tab?.id);
       if (isLancersWorkUrl(_sender.tab?.url) || isLancersJob({ url: msg.extract?.url })) {
-        await markLancersActivity();
+        await deferLancersRefresh();
       }
       sendResponse({ ok: true });
     } else if (msg.type === "LOGIN_MISSING") {
@@ -1293,7 +1279,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await setLancersLoggedOut(true, { toast: false });
       sendResponse({ ok: true });
     } else if (msg.type === "LANCERS_ACTIVITY") {
-      await markLancersActivity();
+      await deferLancersRefresh();
       sendResponse({ ok: true });
     } else if (msg.type === "PROFILE_USER") {
       await rememberProfileUser(msg.name);
@@ -1371,8 +1357,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
+chrome.tabs.onActivated.addListener((info) => {
+  chrome.tabs.get(info.tabId).then((tab) => rememberSelectedLancersTab(tab.id, tab.url)).catch(() => {});
+});
+
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   const url = String(info.url || tab?.url || "");
+  if (url && (info.url || info.status === "complete")) {
+    chrome.tabs.query({ active: true }).then((active) => {
+      if (active.some((row) => row.id === tabId)) rememberSelectedLancersTab(tabId, url);
+    });
+    if (isLancersWorkUrl(url)) deferLancersRefresh();
+  }
   if (!url || (!info.url && info.status !== "complete")) return;
   if (!/crowdworks\.jp\/proposals\/\d+/i.test(url)) return;
   getSlots().then((slots) => {
@@ -1382,8 +1378,11 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  chrome.storage.local.get({ lancersKeepaliveTabId: 0 }).then((local) => {
-    if (Number(local.lancersKeepaliveTabId) === tabId) chrome.storage.local.set({ lancersKeepaliveTabId: 0 });
+  chrome.storage.local.get({ lancersSelectedTabId: 0, lancersKeepaliveTabId: 0 }).then((local) => {
+    const patch = {};
+    if (Number(local.lancersSelectedTabId) === tabId) patch.lancersSelectedTabId = 0;
+    if (Number(local.lancersKeepaliveTabId) === tabId) patch.lancersKeepaliveTabId = 0;
+    if (Object.keys(patch).length) chrome.storage.local.set(patch);
   });
   if (closingByUs.has(tabId)) {
     closingByUs.delete(tabId);
@@ -1399,5 +1398,8 @@ migrateLocalhostIfUnreachable();
 scheduleScanAlarm();
 scheduleLancersAlarm();
 clearStaleLoginHalt();
+chrome.tabs.query({ active: true }).then((tabs) => {
+  for (const tab of tabs || []) rememberSelectedLancersTab(tab.id, tab.url);
+});
 chrome.alarms.create(BIDER_ALARM, { periodInMinutes: CHROME_ALARM_FLOOR_MIN });
 connect();
