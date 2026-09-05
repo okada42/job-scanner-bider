@@ -40,9 +40,9 @@ export const JobsPanel = memo(function JobsPanel({
         <div>
           <h2>Jobs</h2>
           <p className="muted">
-            Only new listings after the first crawl. Baseline jobs stay hidden. Bider status resets at
-            midnight Japan time
-            {expired > 0 ? ` (${expired} expired from earlier days hidden).` : "."}
+            Today&apos;s new listings (Japan time) plus manually added URLs. Earlier days and baseline jobs
+            stay hidden
+            {expired > 0 ? ` (${expired} expired today).` : "."}
           </p>
         </div>
         <div className="pager-sizes" role="group" aria-label="Rows per page">
@@ -80,7 +80,7 @@ export const JobsPanel = memo(function JobsPanel({
             ) : jobs.length === 0 ? (
               <tr>
                 <td colSpan={5} className="empty">
-                  No new jobs yet. The first crawl is stored as baseline and stays hidden here.
+                  No new jobs today yet. Earlier days, and the first-crawl baseline, stay hidden here.
                 </td>
               </tr>
             ) : (

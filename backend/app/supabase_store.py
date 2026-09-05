@@ -171,12 +171,22 @@ def _baseline_job_ids(sb) -> set[str]:
     return ids
 
 
-def _jobs_query(sb, status: str | None, count: bool = False, exclude_status: str | None = None):
-    q = sb.table("jobs").select("id", count="exact") if count else sb.table("jobs").select("*")
+def _jobs_query(
+    sb,
+    status: str | None,
+    count: bool = False,
+    exclude_status: str | None = None,
+    today_only: bool = False,
+    columns: str = "*",
+):
+    q = sb.table("jobs").select("id", count="exact") if count else sb.table("jobs").select(columns)
     if status:
         q = q.eq("status", status)
     elif exclude_status:
         q = q.neq("status", exclude_status)
+    if today_only:
+        # Today's jobs (scanner day) plus manually pinned URLs from any day.
+        q = q.or_(f"detected_at.gte.{day_bound()},priority.gte.{MANUAL_PRIORITY}")
     return q
 
 
@@ -318,22 +328,28 @@ def delete_source(source_id: str) -> None:
     supabase().table("scanner_sources").delete().eq("id", source_id).execute()
 
 
-def count_jobs(status: str | None = None, new_only: bool = False, exclude_status: str | None = None) -> int:
+def count_jobs(
+    status: str | None = None,
+    new_only: bool = False,
+    exclude_status: str | None = None,
+    today_only: bool = False,
+) -> int:
     try:
         sb = supabase()
-        res = _jobs_query(sb, status, count=True, exclude_status=exclude_status).limit(1).execute()
+        res = _jobs_query(
+            sb, status, count=True, exclude_status=exclude_status, today_only=today_only
+        ).limit(1).execute()
         total = int(res.count or 0)
         if not new_only:
             return total
         baseline = set(_baseline_job_ids(sb))
-        if not status and not exclude_status:
+        if not status and not exclude_status and not today_only:
             return max(0, total - len(baseline))
         counted = 0
         start = 0
         page = 1000
         while True:
-            q = sb.table("jobs").select("id")
-            q = q.eq("status", status) if status else q.neq("status", exclude_status)
+            q = _jobs_query(sb, status, exclude_status=exclude_status, today_only=today_only, columns="id")
             rows = q.range(start, start + page - 1).execute().data or []
             counted += sum(1 for row in rows if str(row.get("id") or "") not in baseline)
             if len(rows) < page:
@@ -350,6 +366,7 @@ def list_jobs(
     new_only: bool = False,
     offset: int = 0,
     exclude_status: str | None = None,
+    today_only: bool = False,
 ) -> list[dict]:
     try:
         sb = supabase()
@@ -361,7 +378,9 @@ def list_jobs(
         start = 0
         page = 100
         while len(collected) < lim:
-            q = _jobs_query(sb, status, exclude_status=exclude_status).order("detected_at", desc=True)
+            q = _jobs_query(sb, status, exclude_status=exclude_status, today_only=today_only).order(
+                "detected_at", desc=True
+            )
             batch = q.range(start, start + page - 1).execute().data or []
             if not batch:
                 break

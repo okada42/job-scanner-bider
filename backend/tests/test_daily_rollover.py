@@ -83,6 +83,19 @@ def test_rollover_expires_stale_bider_jobs_and_keeps_today(db):
     assert sqlite_store.expire_stale_bider_jobs(local_day_start_iso()) == []
 
 
+def test_dashboard_scope_is_today_plus_manual(db):
+    _insert("old-q", "QUEUED", _yesterday())
+    _insert("old-manual", "QUEUED", _yesterday(), priority=105)
+    _insert("new-r", "RECORDED", _today())
+    _insert("new-q", "QUEUED", _today())
+
+    rows = sqlite_store.list_jobs(limit=50, today_only=True)
+    assert {j["external_job_id"] for j in rows} == {"old-manual", "new-r", "new-q"}
+    assert sqlite_store.count_jobs(today_only=True) == 3
+    assert sqlite_store.count_jobs(status="QUEUED", today_only=True) == 2
+    assert sqlite_store.count_jobs() == 4
+
+
 def test_scheduler_rolls_over_once_per_day(db, monkeypatch):
     _insert("old-q", "QUEUED", _yesterday())
     monkeypatch.setattr(scheduler_mod, "expire_stale_bider_jobs", sqlite_store.expire_stale_bider_jobs)

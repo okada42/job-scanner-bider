@@ -90,13 +90,22 @@ def jobs(
     offset: int = Query(default=0, ge=0),
     new_only: bool = Query(default=True),
     hide_expired: bool = Query(default=True),
+    today_only: bool = Query(default=True),
 ):
+    """Dashboard list: by default only jobs detected today (Japan time) plus manually added URLs."""
     exclude = "EXPIRED" if hide_expired and not status else None
     rows = attach_user_states(
-        list_jobs(status=status, limit=limit, offset=offset, new_only=new_only, exclude_status=exclude)
+        list_jobs(
+            status=status,
+            limit=limit,
+            offset=offset,
+            new_only=new_only,
+            exclude_status=exclude,
+            today_only=today_only,
+        )
     )
-    total = count_jobs(status=status, new_only=new_only, exclude_status=exclude)
-    expired = count_jobs(status="EXPIRED", new_only=new_only) if exclude else 0
+    total = count_jobs(status=status, new_only=new_only, exclude_status=exclude, today_only=today_only)
+    expired = count_jobs(status="EXPIRED", new_only=new_only, today_only=today_only) if exclude else 0
     return {"jobs": rows, "total": total, "expired": expired}
 
 

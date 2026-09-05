@@ -487,9 +487,13 @@ _STATUS_AT_SQL = f"""CASE WHEN jobs.status IN ({",".join(repr(s) for s in _AGE_S
         ) ELSE jobs.updated_at END"""
 
 
-def count_jobs(status: str | None = None, new_only: bool = False, exclude_status: str | None = None) -> int:
-    conn = connect()
-    extra = _NEW_ONLY_SQL if new_only else ""
+# Dashboard scope: jobs detected today (scanner day) plus manually pinned URLs from any day.
+_TODAY_OR_MANUAL_SQL = "and (substr(jobs.detected_at, 1, 19) >= ? or coalesce(jobs.priority, 0) >= ?)"
+
+
+def _job_filters(
+    status: str | None, exclude_status: str | None, today_only: bool
+) -> tuple[str, list]:
     params: list = []
     where = "1=1"
     if status:
@@ -498,6 +502,21 @@ def count_jobs(status: str | None = None, new_only: bool = False, exclude_status
     elif exclude_status:
         where += " and status != ?"
         params.append(exclude_status)
+    if today_only:
+        where += f" {_TODAY_OR_MANUAL_SQL}"
+        params.extend([day_bound(), MANUAL_PRIORITY])
+    return where, params
+
+
+def count_jobs(
+    status: str | None = None,
+    new_only: bool = False,
+    exclude_status: str | None = None,
+    today_only: bool = False,
+) -> int:
+    conn = connect()
+    extra = _NEW_ONLY_SQL if new_only else ""
+    where, params = _job_filters(status, exclude_status, today_only)
     row = conn.execute(f"select count(*) as n from jobs where {where} {extra}", params).fetchone()
     return int(row["n"] if row else 0)
 
@@ -508,19 +527,13 @@ def list_jobs(
     new_only: bool = False,
     offset: int = 0,
     exclude_status: str | None = None,
+    today_only: bool = False,
 ) -> list[dict]:
     conn = connect()
     extra = _NEW_ONLY_SQL if new_only else ""
     off = max(0, int(offset))
     lim = int(limit)
-    params: list = []
-    where = "1=1"
-    if status:
-        where += " and status = ?"
-        params.append(status)
-    elif exclude_status:
-        where += " and status != ?"
-        params.append(exclude_status)
+    where, params = _job_filters(status, exclude_status, today_only)
     rows = conn.execute(
         f"select jobs.*, {_STATUS_AT_SQL} as status_at from jobs where {where} {extra} order by detected_at desc limit ? offset ?",
         (*params, lim, off),
