@@ -37,7 +37,7 @@ function looksLikePrice(el) {
     el.getAttribute("aria-label"),
     (row?.innerText || "").slice(0, 80),
   ].join(" ");
-  if (/完了予定日|見積もり|自己PR|タイトル/.test(blob)) return false;
+  if (/完了予定日|提案文|見積もり|自己PR|タイトル/.test(blob)) return false;
   return /契約金額|希望金額|提示金額|報酬|単価|price|budget|reward|contract_amount|payment_amount/i.test(blob);
 }
 
@@ -73,14 +73,6 @@ function labeledCell(title) {
   return (value?.innerText || "").replace(/\s+/g, " ").trim();
 }
 
-function labeledBlock(title) {
-  const head = findLabelNode(title);
-  if (!head) return "";
-  const row = head.closest("tr, dl, section, article, .form-item") || head.parentElement;
-  const value = (row && row.querySelector("td, dd, .value, [class*='detail']")) || head.nextElementSibling;
-  return (value?.innerText || row?.innerText || "").replace(new RegExp(`^${title}\\s*`), "").trim();
-}
-
 function findLabeledControl(titles, selector) {
   for (const title of titles) {
     const label = findLabelNode(title);
@@ -114,104 +106,81 @@ function findApplyControl() {
 }
 
 function findProposalBox() {
-  return findLabeledControl(["自己PR・実績", "自己PR"], "textarea") || findEstimateBox();
+  return findLabeledControl(["提案文"], "textarea");
 }
 
-function findEstimateBox() {
-  return findLabeledControl(["見積もりの詳細"], "textarea");
-}
-
-function extractTitle() {
-  const h1 = document.querySelector("h1.c-heading.c-heading--lv1, header.l-page-header h1, h1");
-  if (h1) {
-    const clone = h1.cloneNode(true);
-    clone.querySelectorAll("a, .c-heading__sub, .c-badge, [class*='badge'], small, .subtitle").forEach((n) => n.remove());
-    const text = (clone.innerText || "").replace(/\s+/g, " ").trim();
-    if (text) return text;
-  }
-  return labeledCell("依頼タイトル") || (document.title || "").replace(/\s*[-|｜]\s*ランサーズ.*$/, "").trim();
-}
-
-function headingSection(title) {
-  const heads = [...document.querySelectorAll("h1, h2, h3, h4, dt, th, .heading, [class*='Title'], [class*='heading']")];
-  const head = heads.find((el) => compact(el.innerText).includes(compact(title)));
-  if (!head) return null;
-  return head.closest("section, article, dl, table, .section, [class*='section']") || head.parentElement;
-}
-
-function sectionText(title) {
-  const section = headingSection(title);
-  const raw = (section?.innerText || "").trim();
-  return raw.replace(new RegExp(`^${title}\\s*`), "").trim();
-}
-
-function extractDetails() {
-  const fromTable = labeledBlock("詳細");
-  if (fromTable && fromTable.length > 20 && !/^クライアント名/.test(fromTable)) {
-    return fromTable.replace(/続きを読む/g, "").trim();
-  }
-  for (const title of ["依頼詳細", "依頼概要", "仕事の詳細", "仕事内容", "募集内容", "見積もり募集の内容"]) {
-    const text = sectionText(title);
-    if (text && text.length > 20) return text.replace(/続きを読む/g, "").trim();
-  }
-  const main = document.querySelector("main, article, .p-work-detail-lancer, [class*='work-detail']");
-  return (main?.innerText || "").trim();
+function clientBox() {
+  return document.querySelector(".p-work-detail-client-box__inner, .p-work-detail-client-box");
 }
 
 function extractClient() {
+  const box = clientBox();
+  const nameEl = box?.querySelector(".client_name, .p-work-detail-client-box-work-status");
+  const name = (nameEl?.innerText || "").replace(/\s+/g, " ").trim();
+  if (name && name.length <= 60 && !/ログイン|会員|メッセージ/.test(name)) return name;
   const fromRow = labeledCell("クライアント名") || labeledCell("依頼主") || labeledCell("クライアント");
   if (fromRow && fromRow.length <= 60 && !/業種|予算|ログイン/.test(fromRow)) return fromRow;
-  const side = document.querySelector(
-    "aside [class*='client'], [class*='client-info'], [class*='ClientInfo'], [class*='employer'], aside"
-  );
-  const sideText = (side?.innerText || "").replace(/\s+/g, " ").trim();
-  const named = sideText.match(/([^\n]{1,20})\s*\(([a-zA-Z0-9_.-]{2,40})\)/);
-  if (named) return `${named[1].trim()} (${named[2]})`;
-  const link = document.querySelector(
-    "a[href*='/client/'], a[href*='/user/'], a[href*='/profile/'], [class*='client'] a, [class*='Client'] a"
-  );
-  const name = (link?.innerText || "").replace(/\s+/g, " ").trim();
-  if (name && name.length <= 60 && !/ログイン|会員|提案/.test(name)) return name;
   return "";
 }
 
+function extractClientMeta() {
+  const box = clientBox();
+  const blob = box ? box.innerText : "";
+  const rate = blob.match(/発注率\s*(\d+\s*%)/) || blob.match(/(\d+)\s*%/);
+  return {
+    identity: /本人確認/.test(blob) ? true : null,
+    completionRate: rate ? rate[1].replace(/\s+/g, "") : "—",
+  };
+}
+
 function extractBudget() {
-  const fromRow = labeledCell("依頼予算") || labeledCell("提示した予算") || labeledCell("予算");
-  if (fromRow && /円/.test(fromRow)) return fromRow;
-  const blob = document.body ? document.body.innerText : "";
-  const project = blob.match(/プロジェクト\s*[~～〜]\s*([\d,]+円)/);
+  const root = document.querySelector(".work_detail_lefter") || document.body;
+  const text = root ? root.innerText : "";
+  const project = text.match(/プロジェクト[\s\S]{0,40}[~～〜]\s*([\d,]+円)/) || text.match(/[~～〜]\s*([\d,]+円)/);
   if (project) return `~ ${project[1]}`;
-  const yen = blob.match(/[~～〜]\s*([\d,]+円)/);
-  return yen ? `~ ${yen[1]}` : fromRow || "";
+  const fromRow = labeledCell("依頼予算") || labeledCell("提示した予算") || labeledCell("予算");
+  return fromRow && /円/.test(fromRow) ? fromRow : "";
 }
 
 function extractPosted() {
-  return labeledCell("募集開始日時") || labeledCell("募集開始") || labeledCell("掲載日") || "";
+  const blob = document.body ? document.body.innerText : "";
+  const start = blob.match(/開始[：:\s]*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)/);
+  return start ? start[1] : labeledCell("募集開始日時") || labeledCell("募集開始") || labeledCell("掲載日") || "";
 }
 
 function extractDeadline() {
-  return labeledCell("募集締切日時") || labeledCell("募集締切") || labeledCell("締切") || "";
+  const blob = document.body ? document.body.innerText : "";
+  const due = blob.match(/締切[：:\s]*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日(?:\s*\d{1,2}:\d{2})?)/);
+  return due ? due[1].replace(/\s+/g, " ").trim() : labeledCell("募集締切日時") || labeledCell("締切") || "";
+}
+
+function extractDesiredDue() {
+  const blob = document.body ? document.body.innerText : "";
+  const noki = blob.match(/希望納期[：:\s]*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)/);
+  return noki ? noki[1] : labeledCell("希望納期") || "";
 }
 
 function extractPage() {
-  const postedLabel = extractPosted();
   const dates = globalThis.JobBiderDates;
-  const postedAt = (dates && dates.parseJpDate && dates.parseJpDate(postedLabel)) || null;
-  const title = extractTitle();
-  const details = extractDetails();
-  const client = extractClient();
-  const budget = extractBudget();
+  const postedLabel = extractPosted();
+  const desiredLabel = extractDesiredDue();
+  const postedAt = dates && postedLabel ? dates.parseJpDate(postedLabel) : null;
+  const dueAt =
+    (dates && desiredLabel && dates.parseJpDate(desiredLabel)) ||
+    (postedAt && dates ? dates.plusOneMonth(postedAt) : null);
+  const meta = extractClientMeta();
   return {
-    title,
-    details,
-    description: details,
-    client: client || "—",
-    budget,
+    title: "",
+    details: "",
+    description: "",
+    client: extractClient() || "—",
+    budget: extractBudget(),
     postedLabel,
     postedAt,
     deadline: extractDeadline(),
-    dueAt: postedAt && dates ? dates.plusOneMonth(postedAt) : null,
-    identity: /本人確認/.test(document.body?.innerText || "") ? true : null,
+    dueAt,
+    identity: meta.identity,
+    completionRate: meta.completionRate,
     url: location.href,
     at: new Date().toISOString(),
   };
@@ -248,19 +217,24 @@ function isLoggedOut() {
 function isProposalPage() {
   if (/propose_start|\/proposal|offer|entry/.test(location.pathname)) return true;
   const blob = document.body ? document.body.innerText.slice(0, 6000) : "";
-  if (/見積もりの詳細/.test(blob) && /自己PR/.test(blob)) return true;
+  if (/提案文/.test(blob) && /完了予定日/.test(blob)) return true;
   if (/完了予定日/.test(blob) && /契約金額/.test(blob) && !findApplyControl()) return true;
-  return Boolean((findEstimateBox() || findProposalBox()) && !findApplyControl());
+  return Boolean(findProposalBox() && !findApplyControl());
 }
 
 function extractDescription() {
-  return extractDetails() || (document.body?.innerText || "").trim();
+  return "";
 }
 
 function dueParts(extract) {
   const dates = globalThis.JobBiderDates;
   if (!dates) return null;
   if (extract?.dueAt) return extract.dueAt;
+  const desired = extractDesiredDue();
+  if (desired) {
+    const parsed = dates.parseJpDate(desired);
+    if (parsed) return parsed;
+  }
   if (extract?.postedAt) return dates.plusOneMonth(extract.postedAt);
   const today = dates.todayJst && dates.todayJst();
   const m = String(today || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -338,38 +312,28 @@ function fillDueDate(due) {
   return false;
 }
 
-async function expandReadMore() {
-  const links = visibleButtons().filter((el) => /続きを読む/.test(labelOf(el)));
-  for (const link of links) {
-    link.click();
-    await sleep(200);
-  }
-}
-
 function mergeExtract(incoming) {
   const live = extractPage();
   if (!incoming) return live;
   return {
-    ...live,
     ...incoming,
-    title: incoming.title || live.title,
-    details: incoming.details || incoming.description || live.details,
-    description: incoming.details || incoming.description || live.description,
-    postedAt: incoming.postedAt || live.postedAt,
-    dueAt: incoming.dueAt || live.dueAt,
-    client: incoming.client && incoming.client !== "—" ? incoming.client : live.client,
-    budget: incoming.budget || live.budget,
+    ...live,
+    title: incoming.title || "",
+    details: "",
+    description: "",
+    postedAt: live.postedAt || incoming.postedAt || null,
+    dueAt: live.dueAt || incoming.dueAt || null,
+    client: live.client && live.client !== "—" ? live.client : incoming.client || "—",
+    budget: live.budget || incoming.budget || "",
+    identity: live.identity ?? incoming.identity ?? null,
+    completionRate: live.completionRate && live.completionRate !== "—" ? live.completionRate : incoming.completionRate || "—",
   };
 }
 
 async function fillApplication(extract) {
-  await expandReadMore();
   const merged = mergeExtract(extract);
-  const description = merged.details || merged.description || "";
-  const estimate = findEstimateBox();
-  if (estimate) pasteInto(estimate, ".");
-  const pr = findLabeledControl(["自己PR・実績", "自己PR"], "textarea");
-  if (pr) pasteInto(pr, description);
+  const proposal = findProposalBox();
+  if (proposal) pasteInto(proposal, "");
   let dueSet = false;
   if (/完了予定日/.test(document.body?.innerText || "")) {
     await randomWait();
@@ -379,11 +343,10 @@ async function fillApplication(extract) {
     ok: true,
     stage: "filled",
     stopped: true,
-    pasted: Boolean(pr && description),
-    estimateCleared: Boolean(estimate),
+    cleared: Boolean(proposal),
     dueSet,
     extract: merged,
-    description,
+    description: "",
   };
 }
 
@@ -402,9 +365,9 @@ async function prepare(msg) {
       await sleep(300);
       if (isProposalPage()) return fillApplication(extract);
     }
-    return { ok: true, stage: "clicked_apply", extract, description: extract.details, stopped: false };
+    return { ok: true, stage: "clicked_apply", extract, description: "", stopped: false };
   }
-  return { ok: false, error: "no_apply_or_box", extract, description: extract.details, stopped: true };
+  return { ok: false, error: "no_apply_or_box", extract, description: "", stopped: true };
 }
 
 window.JobBiderPlatform = {

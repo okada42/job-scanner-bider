@@ -79,7 +79,7 @@ async function paint() {
     } else {
       status.className = "meta";
       status.textContent =
-        "CrowdWorks: 応募画面へ + date. Lancers: 提案する, 見積もりは ., 自己PRに依頼詳細, 完了予定日 +1 month. Never fills 契約金額.";
+        "CrowdWorks: 応募画面へ + date. Lancers: budget + client only, clear 提案文, set 完了予定日. Never fills 契約金額.";
     }
 
     const box = document.getElementById("jobs");
