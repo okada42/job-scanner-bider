@@ -271,49 +271,201 @@ function setSelectValue(select, num) {
   return true;
 }
 
-function findDueDateInput() {
-  const label = findLabelNode("完了予定日");
-  if (!label) return null;
-  let sib = label.nextElementSibling;
-  for (let i = 0; i < 8 && sib; i += 1, sib = sib.nextElementSibling) {
-    const input = sib.matches?.("input") ? sib : sib.querySelector?.("input:not([type=number])");
-    if (input && visible(input) && !looksLikePrice(input) && input.type !== "number") return input;
-  }
-  const root = label.closest("tr, li, .form-item, .form-group, .field, section, div") || label.parentElement;
-  const inputs = [...(root || document).querySelectorAll("input")].filter((el) => {
-    if (!visible(el) || looksLikePrice(el) || el.type === "number") return false;
-    return el.type === "date" || el.type === "text" || el.type === "hidden" || !el.type;
+const DUE_LABELS = ["完了予定日", "納品予定日", "完了予定", "納期"];
+const DATE_FIELD_RE = /date|due|complete|delivery|deliver|finish|schedule|noki|kanryo|calendar|picker/i;
+
+// The deepest element whose own text starts with one of the labels (the visible caption of the field).
+function findDueLabelNode() {
+  const wants = DUE_LABELS.map(compact);
+  const all = [...document.querySelectorAll("label, th, dt, legend, p, span, div, h2, h3, h4, li")];
+  const hits = all.filter((el) => {
+    if (!visible(el) && el.tagName !== "LABEL") return false;
+    const t = compact(el.innerText);
+    if (!t || t.length > 40) return false;
+    return wants.some((w) => t === w || t.startsWith(w));
   });
-  const named = inputs.find((el) =>
-    /date|due|complete|delivery|finish|schedule|noki/i.test(`${el.name} ${el.id} ${el.className} ${el.placeholder}`)
-  );
-  if (named) return named;
-  const dateType = inputs.find((el) => el.type === "date");
-  if (dateType) return dateType;
-  return inputs.find((el) => !/プロジェクト|完成|タイトル/.test(el.value || "")) || null;
+  if (!hits.length) return null;
+  hits.sort((a, b) => (a.contains(b) ? 1 : b.contains(a) ? -1 : 0));
+  return hits[0];
 }
 
-function fillDueDate(due) {
-  if (!due) return false;
+function follows(anchor, el) {
+  return Boolean(anchor.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+// Controls that come after the label in document order, nearest first.
+function controlsAfter(anchor, selector, limit = 12) {
+  if (!anchor) return [];
+  const out = [];
+  for (const el of document.querySelectorAll(selector)) {
+    if (!follows(anchor, el)) continue;
+    out.push(el);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function isDateInput(el) {
+  if (!el || looksLikePrice(el) || el.type === "number" || el.inputMode === "numeric") return false;
+  if (["checkbox", "radio", "submit", "button", "file", "email", "password", "search", "url", "tel"].includes(el.type)) {
+    return false;
+  }
+  return true;
+}
+
+function findDueDateInput() {
+  const label = findDueLabelNode();
+  const scoped = label ? controlsAfter(label, "input", 10).filter(isDateInput) : [];
+  const pick = (list) => {
+    const dateType = list.find((el) => el.type === "date" && visible(el));
+    if (dateType) return dateType;
+    const named = list.find(
+      (el) => visible(el) && DATE_FIELD_RE.test(`${el.name} ${el.id} ${el.className} ${el.placeholder}`)
+    );
+    if (named) return named;
+    const shown = list.find((el) => visible(el) && (el.type === "text" || !el.type));
+    if (shown && !/プロジェクト|完成|タイトル/.test(shown.value || "")) return shown;
+    return list.find((el) => el.type === "hidden" && DATE_FIELD_RE.test(`${el.name} ${el.id}`)) || null;
+  };
+  const near = pick(scoped.slice(0, 4));
+  if (near) return near;
+  const global = [...document.querySelectorAll("input")].filter(
+    (el) => isDateInput(el) && visible(el) && DATE_FIELD_RE.test(`${el.name} ${el.id} ${el.className} ${el.placeholder}`)
+  );
+  return pick(global) || pick(scoped);
+}
+
+function findDueDateSelects() {
+  const label = findDueLabelNode();
+  const pool = (label ? controlsAfter(label, "select", 6) : [...document.querySelectorAll("select")]).filter(
+    (s) => visible(s) && !looksLikePrice(s)
+  );
+  if (pool.length < 3) return null;
+  let year;
+  let month;
+  let day;
+  for (const s of pool.slice(0, 5)) {
+    const vals = [...s.options].map((o) => String(o.value || o.textContent || "").trim()).filter(Boolean);
+    if (!year && vals.some((v) => /^\d{4}/.test(v))) year = s;
+    else if (!month && vals.filter((v) => /^\d{1,2}$/.test(v)).length <= 12 && vals.some((v) => /^(0?[1-9]|1[0-2])$/.test(v))) month = s;
+    else if (!day && vals.filter((v) => /^\d{1,2}$/.test(v)).length >= 28) day = s;
+  }
+  if (!year || !month || !day) [year, month, day] = pool;
+  return { year, month, day };
+}
+
+function dueStrings(due) {
   const dates = globalThis.JobBiderDates;
-  const iso = `${due.y}-${String(due.m).padStart(2, "0")}-${String(due.d).padStart(2, "0")}`;
-  const slash = `${due.y}/${String(due.m).padStart(2, "0")}/${String(due.d).padStart(2, "0")}`;
-  const jp = dates && dates.formatJpDate ? dates.formatJpDate(due) : `${due.y}年${due.m}月${due.d}日`;
+  const mm = String(due.m).padStart(2, "0");
+  const dd = String(due.d).padStart(2, "0");
+  return {
+    iso: `${due.y}-${mm}-${dd}`,
+    slash: `${due.y}/${mm}/${dd}`,
+    jp: dates && dates.formatJpDate ? dates.formatJpDate(due) : `${due.y}年${mm}月${dd}日`,
+  };
+}
+
+function valueMatchesDue(value, due) {
+  const v = String(value || "");
+  return v.includes(String(due.y)) && (v.includes(String(due.d).padStart(2, "0")) || /\D\d\D|\d$/.test(v));
+}
+
+function setInputValue(input, text) {
+  pasteInto(input, text);
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+  return String(input.value || "") === text;
+}
+
+function visiblePicker() {
+  const sel =
+    ".ui-datepicker, .datepicker, .flatpickr-calendar.open, .vdp-datepicker__calendar, .react-datepicker, .daterangepicker, " +
+    "[class*='datepicker']:not(input), [class*='Datepicker']:not(input), [class*='calendar']:not(input), [class*='Calendar']:not(input)";
+  return [...document.querySelectorAll(sel)].filter((el) => visible(el) && el.querySelector("td, [role='gridcell'], [data-date]"))[0] || null;
+}
+
+function pickerMonth(picker) {
+  const text = picker.innerText || "";
+  const jp = text.match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
+  if (jp) return { y: Number(jp[1]), m: Number(jp[2]) };
+  const en = text.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
+  if (en) {
+    const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+    return { y: Number(en[2]), m: months.indexOf(en[1].toLowerCase()) + 1 };
+  }
+  const num = text.match(/(\d{4})[./-](\d{1,2})/);
+  return num ? { y: Number(num[1]), m: Number(num[2]) } : null;
+}
+
+async function pickFromCalendar(input, due) {
+  input.focus();
+  input.click();
+  let picker = null;
+  for (let i = 0; i < 4 && !picker; i += 1) {
+    await sleep(120);
+    picker = visiblePicker();
+  }
+  if (!picker) return false;
+  const monthSel = picker.querySelector("select[class*='month'], select[data-handler='selectMonth']");
+  const yearSel = picker.querySelector("select[class*='year'], select[data-handler='selectYear']");
+  if (yearSel) setSelectValue(yearSel, due.y);
+  if (monthSel) {
+    const zero = [...monthSel.options].some((o) => o.value === "0");
+    setSelectValue(monthSel, zero ? due.m - 1 : due.m);
+  }
+  for (let i = 0; i < 14; i += 1) {
+    const cur = pickerMonth(picker);
+    if (!cur || (cur.y === due.y && cur.m === due.m)) break;
+    const forward = cur.y < due.y || (cur.y === due.y && cur.m < due.m);
+    const nav = [...picker.querySelectorAll("a, button, span, div")].find((el) => {
+      const cls = `${el.className} ${el.getAttribute("aria-label") || ""} ${el.title || ""}`;
+      return forward ? /next|次/i.test(cls) || labelOf(el) === "›" || labelOf(el) === ">" : /prev|前/i.test(cls) || labelOf(el) === "‹" || labelOf(el) === "<";
+    });
+    if (!nav) break;
+    nav.click();
+    await sleep(100);
+    picker = visiblePicker() || picker;
+  }
+  const want = String(due.d);
+  const cells = [...picker.querySelectorAll("td a, td button, td span, td, [role='gridcell'], [data-date], .flatpickr-day")];
+  const cell = cells.find((el) => {
+    if (!visible(el)) return false;
+    const cls = String(el.className || "") + " " + String(el.parentElement?.className || "");
+    if (/other-month|disabled|outside|prevMonth|nextMonth|unavailable/i.test(cls) || el.getAttribute("aria-disabled") === "true") return false;
+    const data = el.getAttribute("data-date") || el.getAttribute("aria-label") || "";
+    if (/\d{4}/.test(data)) return valueMatchesDue(data, due) && new RegExp(`(^|\\D)0?${want}(\\D|$)`).test(data);
+    return labelOf(el) === want;
+  });
+  if (!cell) return false;
+  cell.click();
+  await sleep(120);
+  return Boolean(input.value);
+}
+
+async function fillDueDate(due) {
+  if (!due) return false;
+  const strings = dueStrings(due);
+  const selects = findDueDateSelects();
+  if (selects && selects.year && selects.month && selects.day) {
+    const ok = setSelectValue(selects.year, due.y) && setSelectValue(selects.month, due.m) && setSelectValue(selects.day, due.d);
+    if (ok) return true;
+  }
   const input = findDueDateInput();
-  if (input) {
-    const current = String(input.value || "");
-    const next = input.type === "date" ? iso : /\//.test(current) || !current ? slash : /年/.test(current) ? jp : slash;
-    pasteInto(input, next);
-    if (input.type !== "date" && input.value !== next) pasteInto(input, iso);
-    return Boolean(input.value);
+  if (!input) return false;
+  if (input.type === "date") return setInputValue(input, strings.iso) || valueMatchesDue(input.value, due);
+  const current = String(input.value || input.placeholder || "");
+  const order = /年/.test(current) ? [strings.jp, strings.slash, strings.iso] : /-/.test(current) ? [strings.iso, strings.slash, strings.jp] : [strings.slash, strings.iso, strings.jp];
+  if (!input.readOnly) {
+    for (const text of order) {
+      if (setInputValue(input, text) && valueMatchesDue(input.value, due)) return true;
+    }
   }
-  const label = findLabelNode("完了予定日");
-  const root = label ? label.closest("tr, li, .form-item, .form-group, section, div") || label.parentElement : null;
-  const selects = [...(root || document).querySelectorAll("select")].filter(visible);
-  if (selects.length >= 3) {
-    return setSelectValue(selects[0], due.y) && setSelectValue(selects[1], due.m) && setSelectValue(selects[2], due.d);
+  if (await pickFromCalendar(input, due)) return true;
+  if (input.type === "hidden" || input.readOnly) {
+    setInputValue(input, order[0]);
+    return valueMatchesDue(input.value, due);
   }
-  return false;
+  return valueMatchesDue(input.value, due);
 }
 
 function mergeExtract(incoming) {
@@ -339,9 +491,14 @@ async function fillApplication(extract) {
   const proposal = findProposalBox();
   if (proposal) pasteInto(proposal, "");
   let dueSet = false;
-  if (/完了予定日/.test(document.body?.innerText || "")) {
-    await randomWait();
-    dueSet = fillDueDate(dueParts(merged));
+  const due = dueParts(merged);
+  // The form can render after load; wait briefly (in 150ms steps) for the date field to appear.
+  for (let i = 0; i < 6 && !findDueLabelNode() && !findDueDateInput(); i += 1) await sleep(150);
+  await randomWait();
+  try {
+    dueSet = await fillDueDate(due);
+  } catch (_) {
+    dueSet = false;
   }
   return {
     ok: true,
@@ -349,6 +506,7 @@ async function fillApplication(extract) {
     stopped: true,
     cleared: Boolean(proposal),
     dueSet,
+    due,
     extract: merged,
     description: "",
   };
@@ -383,4 +541,5 @@ window.JobBiderPlatform = {
   isLoggedOut,
   isProposalPage,
   prepare,
+  __test: { fillDueDate, findDueDateInput, findDueLabelNode },
 };

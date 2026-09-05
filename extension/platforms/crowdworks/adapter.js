@@ -174,20 +174,43 @@ function pasteBody(extract) {
   return [extract.title, extract.details || extract.description].filter(Boolean).join("\n\n");
 }
 
-function looksLikePrice(el) {
-  const row = el?.closest?.("tr, li, label, .form-group, .field, section, div");
-  const blob = [
-    el?.name,
-    el?.id,
-    el?.placeholder,
-    el?.getAttribute?.("aria-label"),
-    (row?.innerText || "").slice(0, 120),
-  ].join(" ");
-  return /契約金額|希望金額|提示金額|報酬|単価|price|budget|reward|contract_amount|payment_amount/i.test(blob);
+const PRICE_RE = /契約金額|税抜|税込|金額|希望金額|提示金額|報酬|単価|price|amount|budget|reward|contract_amount|payment_amount|yen|円/i;
+
+function labelTextFor(el) {
+  const bits = [];
+  if (el?.id) {
+    for (const lab of document.querySelectorAll(`label[for="${el.id}"]`)) bits.push(lab.innerText || "");
+  }
+  const wrap = el?.closest?.("label");
+  if (wrap) bits.push(wrap.innerText || "");
+  if (el?.getAttribute?.("aria-labelledby")) {
+    for (const id of el.getAttribute("aria-labelledby").split(/\s+/)) {
+      bits.push(document.getElementById(id)?.innerText || "");
+    }
+  }
+  return bits.join(" ");
 }
 
+function looksLikePrice(el) {
+  if (!el) return false;
+  if (el.type === "number" || el.inputMode === "numeric" || el.inputMode === "decimal") return true;
+  const own = [el.name, el.id, el.className, el.placeholder, el.getAttribute?.("aria-label"), labelTextFor(el)];
+  // A textarea is judged by its own attributes and label only; its surrounding section
+  // legitimately mentions 契約金額 and must not block the proposal body.
+  if (el.tagName === "TEXTAREA") return PRICE_RE.test(own.join(" "));
+  const row = el.closest?.("tr, li, label, .form-group, .field, section, fieldset, dl");
+  const blob = [
+    ...own,
+    (el.previousElementSibling?.innerText || "").slice(0, 60),
+    (row?.innerText || "").slice(0, 160),
+  ].join(" ");
+  return PRICE_RE.test(blob);
+}
+
+// Only the proposal textarea is ever written. CrowdWorks 契約金額（税抜） is an <input>; we never touch inputs.
 function pasteInto(el, text) {
   if (!el) return false;
+  if (el.tagName !== "TEXTAREA" || looksLikePrice(el)) return false;
   el.focus();
   el.value = text;
   el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -261,9 +284,9 @@ function fillDueDate(due) {
   let day;
   for (const s of selects) {
     const vals = [...s.options].map((o) => o.value).filter(Boolean);
-    if (vals.some((v) => /^\d{4}$/.test(v))) year = s;
-    else if (vals.some((v) => /^(0?[1-9]|1[0-2])$/.test(v)) && vals.length <= 13) month = s;
-    else day = s;
+    if (!year && vals.some((v) => /^\d{4}$/.test(v))) year = s;
+    else if (!month && vals.some((v) => /^(0?[1-9]|1[0-2])$/.test(v)) && vals.length <= 13) month = s;
+    else if (!day) day = s;
   }
   if (!year && selects[0]) year = selects[0];
   if (!month && selects[1]) month = selects[1];
@@ -275,7 +298,6 @@ function fillDueDate(due) {
 }
 
 async function fillTemplate(extract) {
-  const title = extract?.title || "";
   const body = pasteBody(extract);
   const create = visibleControls().find((el) => labelOf(el).includes("新しいテンプレートを作成"));
   if (create) {
@@ -286,15 +308,11 @@ async function fillTemplate(extract) {
     visible
   );
   const root = dialogs[dialogs.length - 1] || document;
-  const inputs = [...root.querySelectorAll("input[type=text], input:not([type])")].filter(
-    (el) => visible(el) && !looksLikePrice(el) && el.type !== "number"
-  );
-  if (inputs[0] && title) pasteInto(inputs[0], title.slice(0, 80));
+  // Never fill any <input> here: the template-name box and 契約金額（税抜） are both inputs.
   const areas = [...root.querySelectorAll("textarea")].filter((el) => visible(el) && !looksLikePrice(el));
   const area = areas.sort((a, b) => (b.offsetHeight || 0) - (a.offsetHeight || 0))[0] || findProposalBox();
   if (!area || looksLikePrice(area)) return { pasted: false };
-  pasteInto(area, body);
-  return { pasted: true };
+  return { pasted: pasteInto(area, body) };
 }
 
 async function fillApplication(extract) {
