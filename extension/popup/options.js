@@ -19,6 +19,15 @@ chrome.storage.sync.get(DEFAULTS, (c) => {
   document.getElementById("applyEnabled").checked = Boolean(c.applyEnabled);
 });
 
+// The name is per Chrome profile, so it lives in storage.local (not sync).
+chrome.storage.local.get({ actorName: "" }, (local) => {
+  document.getElementById("actorName").value = local.actorName || "";
+});
+
+function cleanName(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().replace(/さん$/, "").slice(0, 40);
+}
+
 document.getElementById("useProd").onclick = () => {
   document.getElementById("backendUrl").value = PRODUCTION_API;
 };
@@ -28,16 +37,28 @@ document.getElementById("save").onclick = async () => {
   const applyEnabled = document.getElementById("applyEnabled").checked;
   const backendUrl = normalizeBackendUrl(document.getElementById("backendUrl").value);
   const token = document.getElementById("token").value.trim();
+  const actorName = cleanName(document.getElementById("actorName").value);
   document.getElementById("backendUrl").value = backendUrl;
+  document.getElementById("actorName").value = actorName;
+  const bider = applyEnabled && Boolean(actorName);
+  document.getElementById("applyEnabled").checked = bider;
+  await chrome.storage.local.set({ actorName });
   await chrome.storage.sync.set({
     backendUrl,
     token,
     scanEnabled,
-    applyEnabled,
-    running: applyEnabled,
+    applyEnabled: bider,
+    running: bider,
   });
+  await chrome.runtime.sendMessage({ type: "SET_ACTOR", name: actorName });
   await chrome.runtime.sendMessage({ type: "CONFIG_CHANGED" });
-  setStatus(token ? `Saved. API: ${backendUrl}` : "Saved, but the token is still empty.", token ? "ok" : "err");
+  if (!token) {
+    setStatus("Saved, but the token is still empty.", "err");
+  } else if (applyEnabled && !actorName) {
+    setStatus("Saved. Job Bider stays off until you enter your name.", "err");
+  } else {
+    setStatus(`Saved. API: ${backendUrl}${actorName ? ` · Name: ${actorName}` : ""}`, "ok");
+  }
 };
 
 document.getElementById("test").onclick = async () => {

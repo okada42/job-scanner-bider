@@ -203,27 +203,10 @@ function extractPage() {
   };
 }
 
-function extractLoggedInUser() {
-  const sels = [
-    "[data-user-name]",
-    ".c-header__user-name",
-    ".header-user-name",
-    "[class*='header'] [class*='user-name']",
-    "[class*='Header'] [class*='UserName']",
-    "[class*='userName']",
-    "header [class*='nickname']",
-  ];
-  for (const sel of sels) {
-    const el = document.querySelector(sel);
-    const text = (el?.innerText || el?.getAttribute("data-user-name") || "").replace(/\s+/g, " ").trim();
-    if (text && text.length <= 40 && !/login|会員|ログイン|マイページ/i.test(text)) return text;
-  }
-  return "";
-}
-
 function isLoggedOut() {
-  const name = extractLoggedInUser();
-  if (name) return false;
+  if (document.querySelector("a[href*='/logout'], [href*='mypage'], .c-header__user, [class*='header'] [class*='avatar']")) {
+    return false;
+  }
   const login = visibleButtons().find((el) => {
     const t = labelOf(el);
     return t === "ログイン" || t.startsWith("ログイン") || t === "会員登録" || t.startsWith("会員登録");
@@ -397,7 +380,6 @@ window.JobBiderPlatform = {
   findProposalBox,
   extractDescription,
   extractPage,
-  extractLoggedInUser,
   isLoggedOut,
   isProposalPage,
   prepare,

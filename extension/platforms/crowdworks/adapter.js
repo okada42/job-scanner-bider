@@ -23,15 +23,6 @@ function randomWait() {
   return sleep(300 + Math.floor(Math.random() * 400));
 }
 
-function sanitizeActorName(name) {
-  const value = String(name || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/さん$/, "");
-  if (!value || value.length > 40 || /^ext-/i.test(value) || /login|会員|ログイン|sign\s*in/i.test(value)) return "";
-  return value;
-}
-
 function parseEmbeddedJson(el) {
   if (!el) return null;
   const raw = el.getAttribute("data") || "";
@@ -371,45 +362,6 @@ window.JobBiderPlatform = {
   findProposalBox,
   extractDescription: () => extractDetails() || (document.body.innerText || "").slice(0, 20000),
   extractPage,
-  extractLoggedInUser,
   isProposalPage,
   prepare,
 };
-
-function extractLoggedInUser() {
-  const headerName =
-    document.querySelector('header [class*="_normanHeaderUserMenu_"] [class*="_username_"]') ||
-    document.querySelector('[class*="_normanProfileClickable_"] [class*="_username_"]') ||
-    document.querySelector('[class*="_normanProfileClickable_"] span');
-  const fromHeader = sanitizeActorName(headerName && headerName.innerText);
-  if (fromHeader) return fromHeader;
-  const gon = window.gon && window.gon.current_user;
-  if (gon) {
-    const fromGon = sanitizeActorName(gon.display_name || gon.username || gon.name);
-    if (fromGon) return fromGon;
-  }
-  const nuxt = window.__NUXT__ && window.__NUXT__.state;
-  const fromState =
-    nuxt &&
-    (nuxt.currentUser || nuxt.current_user || (nuxt.auth && (nuxt.auth.user || nuxt.auth.currentUser)));
-  if (fromState) {
-    const fromNuxt = sanitizeActorName(
-      fromState.displayName || fromState.display_name || fromState.username || fromState.name
-    );
-    if (fromNuxt) return fromNuxt;
-  }
-  const sels = [
-    "[data-current-user-name]",
-    "#header-username",
-    ".cw-header_username",
-    ".header-account-name",
-    "header a[href*='/mypage']",
-    "a[href*='/mypage'] .name",
-  ];
-  for (const sel of sels) {
-    const el = document.querySelector(sel);
-    const text = sanitizeActorName(el && (el.getAttribute("data-current-user-name") || el.innerText));
-    if (text) return text;
-  }
-  return "";
-}

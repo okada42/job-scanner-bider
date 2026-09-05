@@ -45,6 +45,9 @@
     <label>API token
       <input id="token" type="password" placeholder="Same token as the dashboard" />
     </label>
+    <label>Your name (this Chrome profile)
+      <input id="actorName" type="text" maxlength="40" placeholder="e.g. kenji" autocomplete="off" />
+    </label>
     <div class="switch-row">
       <span>Job Scan</span>
       <label class="switch">
@@ -61,6 +64,7 @@
     </div>
     <div class="note">
       <p><strong>Backend URL must be the Railway API</strong> (<code>https://job-scanner-bider-production.up.railway.app</code>), not the Netlify dashboard and not <code>127.0.0.1</code> unless you are running FastAPI locally.</p>
+      <p><strong>Your name</strong> labels this Chrome profile’s Bider rows on the dashboard (<code>kenji queued</code>, <code>kenji ready</code>, <code>kenji skipped</code>) and resets each Japan calendar day. It is stored only in this profile. The extension no longer reads your platform user name. Job Bider will not start until a name is set.</p>
       <p><strong>Search Chrome profile:</strong> Job Scan ON, Job Bider OFF. Stay logged in on CrowdWorks / Lancers / Coconala. The extension fetches listing URLs with this profile’s cookies and POSTs jobs to Railway. Railway never stores platform passwords.</p>
       <p><strong>Apply Chrome profile:</strong> Job Scan OFF, Job Bider ON. Opens queued jobs from the shared Railway queue. Does not scan. Never auto-submits.</p>
       <p><strong>Alarm interval:</strong> Dashboard source intervals are honored as much as Manifest V3 allows. Chrome alarms usually fire at most every 30 seconds (unpacked) or 1 minute (packed). A 60s dashboard interval therefore becomes ~1 minute. Per-source last-run in extension storage still skips a source until its interval has elapsed.</p>

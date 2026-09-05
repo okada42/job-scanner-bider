@@ -28,10 +28,6 @@ window.JobBiderPlatform = {
   name: "coconala",
   findApplyControl,
   findProposalBox,
-  extractLoggedInUser() {
-    const el = document.querySelector(".c-headerUserName, [class*='UserName'], a[href*='/mypage']");
-    return (el?.innerText || "").replace(/\s+/g, " ").trim();
-  },
   extractDescription() {
     const el = document.querySelector("main, article, [class*='request']");
     return (el?.innerText || document.body.innerText || "").trim();

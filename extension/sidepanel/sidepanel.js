@@ -38,9 +38,9 @@ async function paint() {
     const sent = parked.filter((slot) => parkedKind(slot) === "sent");
     const skipped = parked.filter((slot) => parkedKind(slot) === "skipped");
     const closed = parked.filter((slot) => parkedKind(slot) === "closed");
-    document.getElementById("profileLine").textContent = state.profileUser
-      ? `Profile · ${state.profileUser}`
-      : "Profile · open CrowdWorks or Lancers while logged in";
+    document.getElementById("profileLine").textContent = state.actorName
+      ? `Name · ${state.actorName}`
+      : "Name · not set (Options → Your name)";
     document.getElementById("statusLine").textContent = state.paused
       ? "Paused"
       : slots.length
@@ -67,6 +67,9 @@ async function paint() {
     if (!state.hasToken) {
       status.className = "meta warn";
       status.textContent = "API token is missing. Open Options and paste the dashboard token.";
+    } else if (!state.actorName) {
+      status.className = "meta warn";
+      status.textContent = "Enter your name in Options (Your name) before enabling Bider.";
     } else if (!state.applyEnabled) {
       status.className = "meta warn";
       status.textContent = "Bider is OFF. Enable apply in the popup, then Fill window.";

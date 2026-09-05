@@ -22,9 +22,9 @@ async function refresh() {
   }
   document.getElementById("scanEnabled").checked = Boolean(state.scanEnabled);
   document.getElementById("applyEnabled").checked = Boolean(state.applyEnabled);
-  document.getElementById("profileLine").textContent = state.profileUser
-    ? `Profile · ${state.profileUser}`
-      : "Profile · open CrowdWorks or Lancers while logged in";
+  document.getElementById("profileLine").textContent = state.actorName
+    ? `Name · ${state.actorName}`
+    : "Name · not set (Options → Your name)";
   const el = document.getElementById("status");
   const slots = state.activeSlots || (state.currentJob ? [state.currentJob] : []);
   const parked = state.parkedSlots || [];
@@ -34,6 +34,8 @@ async function refresh() {
   ].join("");
   if (!state.hasToken) {
     el.textContent = "API token is missing. Open Options.";
+  } else if (!state.actorName) {
+    el.textContent = "Enter your name in Options before using Bider.";
   } else if (state.lancersLoggedOut) {
     el.textContent = "Lancersにログインしてください";
   } else {
@@ -46,19 +48,14 @@ async function refresh() {
           : "Idle / waiting";
   }
   const scanEl = document.getElementById("scanStatus");
-  const refreshed = Number(state.lancersLastRefresh || 0);
-  const refreshAgo = refreshed
-    ? `${Math.max(0, Math.round((Date.now() - refreshed) / 60000))}m ago`
-    : "pending";
-  const refreshLine = `Lancers refresh every 20m (${refreshAgo})`;
   if (!state.scanEnabled) {
-    scanEl.textContent = `Scan off · ${refreshLine}`;
+    scanEl.textContent = "Scan off";
   } else if (state.scanStatus?.error) {
-    scanEl.textContent = `Scan error: ${state.scanStatus.error} · ${refreshLine}`;
+    scanEl.textContent = `Scan error: ${state.scanStatus.error}`;
   } else if (state.scanStatus) {
-    scanEl.textContent = `Last scan: ${state.scanStatus.found ?? 0} found, ${state.scanStatus.created ?? 0} new · ${refreshLine}`;
+    scanEl.textContent = `Last scan: ${state.scanStatus.found ?? 0} found, ${state.scanStatus.created ?? 0} new`;
   } else {
-    scanEl.textContent = `Scan on · ${refreshLine}`;
+    scanEl.textContent = "Scan on";
   }
 
   const box = document.getElementById("jobs");
