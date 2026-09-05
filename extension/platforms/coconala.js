@@ -8,7 +8,7 @@ window.BiderCoconala = {
   },
   async prepare() {
     window.BiderShared.clickByText(["応募", "提案"]);
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 300));
     const box = window.BiderShared.largestTextarea();
     const description = window.BiderShared.pageText();
     if (box) {

@@ -21,7 +21,7 @@ function sleep(ms) {
 }
 
 function randomWait() {
-  return sleep(1000 + Math.floor(Math.random() * 2000));
+  return sleep(300 + Math.floor(Math.random() * 400));
 }
 
 function compact(text) {
@@ -383,7 +383,7 @@ async function prepare(msg) {
     if (!safeClick(apply)) return fillApplication(extract);
     const start = Date.now();
     while (Date.now() - start < 8000) {
-      await sleep(300);
+      await sleep(150);
       if (isProposalPage()) return fillApplication(extract);
     }
     return { ok: true, stage: "clicked_apply", extract, description: "", stopped: false };

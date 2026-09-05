@@ -946,7 +946,7 @@ function waitTabComplete(tabId, timeoutMs = 20000) {
   });
 }
 
-async function sendToTab(tabId, msg, tries = 10) {
+async function sendToTab(tabId, msg, tries = 12) {
   for (let i = 0; i < tries; i += 1) {
     try {
       const res = await chrome.tabs.sendMessage(tabId, msg);
@@ -954,7 +954,7 @@ async function sendToTab(tabId, msg, tries = 10) {
     } catch (_) {
       /* content script may not be injected yet */
     }
-    await sleep(350);
+    await sleep(150);
   }
   return { ok: false, error: "Page script did not respond." };
 }

@@ -20,7 +20,7 @@ function sleep(ms) {
 }
 
 function randomWait() {
-  return sleep(1000 + Math.floor(Math.random() * 2000));
+  return sleep(300 + Math.floor(Math.random() * 400));
 }
 
 function sanitizeActorName(name) {
@@ -289,7 +289,7 @@ async function fillTemplate(extract) {
   const create = visibleControls().find((el) => labelOf(el).includes("新しいテンプレートを作成"));
   if (create) {
     create.click();
-    await sleep(800);
+    await sleep(300);
   }
   const dialogs = [...document.querySelectorAll("[role='dialog'], .modal, [class*='Modal'], [class*='dialog']")].filter(
     visible
@@ -356,8 +356,8 @@ async function prepare(msg) {
   if (apply) {
     await randomWait();
     apply.click();
-    for (let i = 0; i < 20; i += 1) {
-      await sleep(400);
+    for (let i = 0; i < 40; i += 1) {
+      await sleep(150);
       if (isProposalPage()) return fillApplication(extract);
     }
     return { ok: true, stage: "clicked_apply", extract, description: extract.details, stopped: false };
