@@ -88,7 +88,7 @@ async function paint() {
         state.biderMode === "auto"
           ? `Mode auto: tabs open by themselves up to Max active (${state.maxActive || "?"}).`
           : "Mode semi-auto: dashboard-pasted URLs open by themselves; scanned jobs wait for Fill window, Next, or Open.";
-      status.textContent = `${mode} CrowdWorks: 応募画面へ + date. Lancers: budget + client only, clear 提案文, set 完了予定日. Never fills 契約金額.`;
+      status.textContent = `${mode} Per URL: click 応募画面へ / 提案する, clear the proposal box, set 完了予定日 (today + 1 month). Nothing is read from the page. Never fills 契約金額.`;
     }
 
     const box = document.getElementById("jobs");

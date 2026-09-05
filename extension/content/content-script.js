@@ -31,19 +31,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   (async () => {
-    if (msg.type === "EXTRACT") {
-      const extract = typeof platform.extractPage === "function" ? platform.extractPage() : null;
-      sendResponse({
-        ok: true,
-        extract,
-        description: extract?.details || platform.extractDescription(),
-        title: extract?.title || document.title,
-        url: location.href,
-        isProposalPage: platform.isProposalPage(),
-      });
-      return;
-    }
-
     if (msg.type === "PREPARE" || msg.type === "AUTO_APPLY") {
       if (platform.name === "lancers" && typeof platform.isLoggedOut === "function" && platform.isLoggedOut()) {
         showToast("Lancersにログインしてください");
@@ -55,20 +42,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse(await platform.prepare(msg));
         return;
       }
+      // Generic platform: click the apply control, or clear the proposal box. Nothing is read.
       const apply = platform.findApplyControl();
       const box = platform.findProposalBox();
-      const description =
-        (typeof platform.extractPage === "function" && platform.extractPage()?.details) || platform.extractDescription();
       if (box && (platform.isProposalPage() || !apply)) {
         box.focus();
-        box.value = description;
+        box.value = "";
         box.dispatchEvent(new Event("input", { bubbles: true }));
-        sendResponse({ ok: true, stage: "pasted", stopped: true, description });
+        sendResponse({ ok: true, stage: "cleared", stopped: true });
         return;
       }
       if (apply) {
         apply.click();
-        sendResponse({ ok: true, stage: "clicked_apply", stopped: false, description });
+        sendResponse({ ok: true, stage: "clicked_apply", stopped: false });
         return;
       }
       sendResponse({ ok: false, error: "no_apply_or_box", stopped: true });
@@ -95,7 +81,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   );
 })();
 
-(function reportExtract() {
+(function reportSessionOnLoad() {
   const platform = window.JobBiderPlatform;
   if (!platform) return;
 
@@ -114,15 +100,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     chrome.runtime.sendMessage({ type: "LANCERS_LOGGED_OUT" });
   }
   reportSession(4);
-
-  if (typeof platform.extractPage !== "function") return;
-  if (platform.isProposalPage && platform.isProposalPage()) return;
-  try {
-    const extract = platform.extractPage();
-    if (extract && (extract.client || extract.details)) {
-      chrome.runtime.sendMessage({ type: "PAGE_EXTRACT", extract });
-    }
-  } catch (_) {
-    /* ignore */
-  }
 })();

@@ -66,14 +66,6 @@ function findLabelNode(title) {
   );
 }
 
-function labeledCell(title) {
-  const head = findLabelNode(title);
-  if (!head) return "";
-  const row = head.closest("tr, dl, li, .form-item, .row");
-  const value = (row && row.querySelector("td, dd")) || head.nextElementSibling;
-  return (value?.innerText || "").replace(/\s+/g, " ").trim();
-}
-
 function findLabeledControl(titles, selector) {
   for (const title of titles) {
     const label = findLabelNode(title);
@@ -126,83 +118,6 @@ function findProposalBox() {
   return findLabeledControl(["提案文"], "textarea");
 }
 
-function clientBox() {
-  return document.querySelector(".p-work-detail-client-box__inner, .p-work-detail-client-box");
-}
-
-function extractClient() {
-  const box = clientBox();
-  const nameEl = box?.querySelector(".client_name, .p-work-detail-client-box-work-status");
-  const name = (nameEl?.innerText || "").replace(/\s+/g, " ").trim();
-  if (name && name.length <= 60 && !/ログイン|会員|メッセージ/.test(name)) return name;
-  const fromRow = labeledCell("クライアント名") || labeledCell("依頼主") || labeledCell("クライアント");
-  if (fromRow && fromRow.length <= 60 && !/業種|予算|ログイン/.test(fromRow)) return fromRow;
-  return "";
-}
-
-function extractClientMeta() {
-  const box = clientBox();
-  const blob = box ? box.innerText : "";
-  const rate = blob.match(/発注率\s*(\d+\s*%)/) || blob.match(/(\d+)\s*%/);
-  return {
-    identity: /本人確認/.test(blob) ? true : null,
-    completionRate: rate ? rate[1].replace(/\s+/g, "") : "—",
-  };
-}
-
-function extractBudget() {
-  const root = document.querySelector(".work_detail_lefter") || document.body;
-  const text = root ? root.innerText : "";
-  const project = text.match(/プロジェクト[\s\S]{0,40}[~～〜]\s*([\d,]+円)/) || text.match(/[~～〜]\s*([\d,]+円)/);
-  if (project) return `~ ${project[1]}`;
-  const fromRow = labeledCell("依頼予算") || labeledCell("提示した予算") || labeledCell("予算");
-  return fromRow && /円/.test(fromRow) ? fromRow : "";
-}
-
-function extractPosted() {
-  const blob = document.body ? document.body.innerText : "";
-  const start = blob.match(/開始[：:\s]*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)/);
-  return start ? start[1] : labeledCell("募集開始日時") || labeledCell("募集開始") || labeledCell("掲載日") || "";
-}
-
-function extractDeadline() {
-  const blob = document.body ? document.body.innerText : "";
-  const due = blob.match(/締切[：:\s]*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日(?:\s*\d{1,2}:\d{2})?)/);
-  return due ? due[1].replace(/\s+/g, " ").trim() : labeledCell("募集締切日時") || labeledCell("締切") || "";
-}
-
-function extractDesiredDue() {
-  const blob = document.body ? document.body.innerText : "";
-  const noki = blob.match(/希望納期[：:\s]*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)/);
-  return noki ? noki[1] : labeledCell("希望納期") || "";
-}
-
-function extractPage() {
-  const dates = globalThis.JobBiderDates;
-  const postedLabel = extractPosted();
-  const desiredLabel = extractDesiredDue();
-  const postedAt = dates && postedLabel ? dates.parseJpDate(postedLabel) : null;
-  const dueAt =
-    (dates && desiredLabel && dates.parseJpDate(desiredLabel)) ||
-    (postedAt && dates ? dates.plusOneMonth(postedAt) : null);
-  const meta = extractClientMeta();
-  return {
-    title: "",
-    details: "",
-    description: "",
-    client: extractClient() || "—",
-    budget: extractBudget(),
-    postedLabel,
-    postedAt,
-    deadline: extractDeadline(),
-    dueAt,
-    identity: meta.identity,
-    completionRate: meta.completionRate,
-    url: location.href,
-    at: new Date().toISOString(),
-  };
-}
-
 function isLoggedOut() {
   if (document.querySelector("a[href*='/logout'], [href*='mypage'], .c-header__user, [class*='header'] [class*='avatar']")) {
     return false;
@@ -224,26 +139,6 @@ function isProposalPage() {
   if (/提案文/.test(blob) && /完了予定日/.test(blob)) return true;
   if (/完了予定日/.test(blob) && /契約金額/.test(blob) && !findApplyControl()) return true;
   return Boolean(findProposalBox() && !findApplyControl());
-}
-
-function extractDescription() {
-  return "";
-}
-
-function dueParts(extract) {
-  const dates = globalThis.JobBiderDates;
-  if (!dates) return null;
-  if (extract?.dueAt) return extract.dueAt;
-  const desired = extractDesiredDue();
-  if (desired) {
-    const parsed = dates.parseJpDate(desired);
-    if (parsed) return parsed;
-  }
-  if (extract?.postedAt) return dates.plusOneMonth(extract.postedAt);
-  const today = dates.todayJst && dates.todayJst();
-  const m = String(today || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return null;
-  return dates.plusOneMonth({ y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) });
 }
 
 function setSelectValue(select, num) {
@@ -468,30 +363,13 @@ async function fillDueDate(due) {
   return valueMatchesDue(input.value, due);
 }
 
-function mergeExtract(incoming) {
-  const live = extractPage();
-  if (!incoming) return live;
-  return {
-    ...incoming,
-    ...live,
-    title: incoming.title || "",
-    details: "",
-    description: "",
-    postedAt: live.postedAt || incoming.postedAt || null,
-    dueAt: live.dueAt || incoming.dueAt || null,
-    client: live.client && live.client !== "—" ? live.client : incoming.client || "—",
-    budget: live.budget || incoming.budget || "",
-    identity: live.identity ?? incoming.identity ?? null,
-    completionRate: live.completionRate && live.completionRate !== "—" ? live.completionRate : incoming.completionRate || "—",
-  };
-}
-
-async function fillApplication(extract) {
-  const merged = mergeExtract(extract);
+// On /work/propose_start/: clear 提案文 and set 完了予定日 to one month from today. Nothing is read
+// from the page except the form controls themselves.
+async function fillApplication() {
   const proposal = findProposalBox();
   if (proposal) pasteInto(proposal, "");
   let dueSet = false;
-  const due = dueParts(merged);
+  const due = globalThis.JobBiderDates ? JobBiderDates.dueOneMonthFromToday() : null;
   // The form can render after load; wait briefly (in 150ms steps) for the date field to appear.
   for (let i = 0; i < 6 && !findDueLabelNode() && !findDueDateInput(); i += 1) await sleep(150);
   await randomWait();
@@ -500,44 +378,28 @@ async function fillApplication(extract) {
   } catch (_) {
     dueSet = false;
   }
-  return {
-    ok: true,
-    stage: "filled",
-    stopped: true,
-    cleared: Boolean(proposal),
-    dueSet,
-    due,
-    extract: merged,
-    description: "",
-  };
+  return { ok: true, stage: "filled", stopped: true, cleared: Boolean(proposal), dueSet, due };
 }
 
-async function prepare(msg) {
-  const incoming = msg && msg.extract;
-  if (isProposalPage()) {
-    return fillApplication(incoming);
-  }
-  const extract = mergeExtract(incoming);
+// On /work/detail/: click 提案する, then fill the form once it appears.
+async function prepare() {
+  if (isProposalPage()) return fillApplication();
   const apply = findApplyControl();
-  if (apply) {
-    await randomWait();
-    if (!safeClick(apply)) return fillApplication(extract);
-    const start = Date.now();
-    while (Date.now() - start < 8000) {
-      await sleep(150);
-      if (isProposalPage()) return fillApplication(extract);
-    }
-    return { ok: true, stage: "clicked_apply", extract, description: "", stopped: false };
+  if (!apply) return { ok: false, error: "no_apply_or_box", stopped: true };
+  await randomWait();
+  if (!safeClick(apply)) return fillApplication();
+  const start = Date.now();
+  while (Date.now() - start < 8000) {
+    await sleep(150);
+    if (isProposalPage()) return fillApplication();
   }
-  return { ok: false, error: "no_apply_or_box", extract, description: "", stopped: true };
+  return { ok: true, stage: "clicked_apply", stopped: false };
 }
 
 window.JobBiderPlatform = {
   name: "lancers",
   findApplyControl,
   findProposalBox,
-  extractDescription,
-  extractPage,
   isLoggedOut,
   isProposalPage,
   prepare,

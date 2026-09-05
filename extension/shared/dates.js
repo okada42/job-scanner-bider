@@ -46,4 +46,11 @@ function todayJst() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Tokyo" });
 }
 
-globalThis.JobBiderDates = { parseJpDate, plusOneMonth, formatJpDate, formatCompact, todayJst };
+// 完了予定日 for every proposal: one month from today (Japan time). Nothing is read from the job page.
+function dueOneMonthFromToday() {
+  const m = todayJst().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return plusOneMonth({ y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) });
+}
+
+globalThis.JobBiderDates = { parseJpDate, plusOneMonth, formatJpDate, formatCompact, todayJst, dueOneMonthFromToday };

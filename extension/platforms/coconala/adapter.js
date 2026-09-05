@@ -28,10 +28,6 @@ window.JobBiderPlatform = {
   name: "coconala",
   findApplyControl,
   findProposalBox,
-  extractDescription() {
-    const el = document.querySelector("main, article, [class*='request']");
-    return (el?.innerText || document.body.innerText || "").trim();
-  },
   isProposalPage() {
     return /offer|apply|proposal|entries/.test(location.pathname);
   },

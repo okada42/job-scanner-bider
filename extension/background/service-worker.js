@@ -435,32 +435,10 @@ function previewFromJob(job, extra = {}) {
   };
 }
 
+// The card shows only what the database already knows about the job. The job page is never
+// fetched or scraped by the extension; the only request to the platform is opening the tab.
 async function fetchJobPreview(job) {
-  const base = previewFromJob(job);
-  const url = String(job?.url || "");
-  const isCw = /crowdworks\.jp/i.test(url);
-  const isLn = /lancers\.jp/i.test(url);
-  if (!url || (!isCw && !isLn)) return base;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
-  try {
-    const res = await fetch(url, { credentials: "include", redirect: "follow", signal: ctrl.signal });
-    if (!res.ok) return { ...base, fetchError: true };
-    const html = await res.text();
-    const parsed = isLn
-      ? typeof self.parseLancersDetail === "function"
-        ? self.parseLancersDetail(html)
-        : null
-      : typeof self.parseCrowdWorksDetail === "function"
-        ? self.parseCrowdWorksDetail(html)
-        : null;
-    if (!parsed) return { ...base, fetchError: true };
-    return previewFromJob(job, parsed);
-  } catch (_) {
-    return { ...base, fetchError: true };
-  } finally {
-    clearTimeout(timer);
-  }
+  return previewFromJob(job);
 }
 
 const IN_FLIGHT = new Set(["SENT_TO_BIDER", "PROCESSING", "PROPOSAL_PAGE_READY", "WAITING_FOR_USER"]);
@@ -1280,9 +1258,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (res?.extract) await rememberExtract(res.extract, tab.id, slot?.id);
       sendResponse(res || { ok: false, error: "Prepare did not run on this page." });
       return;
-    } else if (msg.type === "PAGE_EXTRACT") {
-      await rememberExtract(msg.extract, _sender.tab?.id);
-      sendResponse({ ok: true });
     } else if (msg.type === "LOGIN_MISSING") {
       sendResponse({ ok: true });
     } else if (msg.type === "LANCERS_LOGGED_OUT") {

@@ -23,157 +23,6 @@ function randomWait() {
   return sleep(300 + Math.floor(Math.random() * 400));
 }
 
-function parseEmbeddedJson(el) {
-  if (!el) return null;
-  const raw = el.getAttribute("data") || "";
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch (_) {
-    try {
-      const ta = document.createElement("textarea");
-      ta.innerHTML = raw;
-      return JSON.parse(ta.value);
-    } catch (e) {
-      return null;
-    }
-  }
-}
-
-function tableValue(label) {
-  for (const th of document.querySelectorAll("th")) {
-    const text = (th.innerText || "").replace(/\s+/g, "");
-    if (!text.includes(label)) continue;
-    const td = th.parentElement?.querySelector("td");
-    if (td) return (td.innerText || "").trim();
-  }
-  return "";
-}
-
-function headingSection(title) {
-  const heads = [...document.querySelectorAll("h1, h2, h3, .cw-sub_head")];
-  const head = heads.find((el) => (el.innerText || "").replace(/\s+/g, "").includes(title));
-  if (!head) return null;
-  return head.closest("section") || head.parentElement;
-}
-
-function extractTitle() {
-  const h1 = document.querySelector("h1");
-  if (!h1) return (document.title || "").replace(/\s*[-|｜].*$/, "").trim();
-  const clone = h1.cloneNode(true);
-  clone.querySelectorAll(".subtitle, a").forEach((n) => n.remove());
-  return (clone.innerText || h1.innerText || "").trim();
-}
-
-function extractDetails() {
-  const section = headingSection("仕事の詳細");
-  if (section) {
-    const cell = section.querySelector(".confirm_outside_link, .job_offer_detail_table td, td");
-    const text = (cell?.innerText || section.innerText || "").trim();
-    return text.replace(/^仕事の詳細\s*/, "").trim();
-  }
-  return "";
-}
-
-function verificationFromClient(info, fallbackText) {
-  const bits = [];
-  if (info) {
-    if (info.isIdentityVerified === true) bits.push("本人確認済み");
-    else if (info.isIdentityVerified === false) bits.push("本人確認未提出");
-    if (info.isEmployerRuleCheckSucceeded === true) bits.push("発注ルールチェック済み");
-    else if (info.isEmployerRuleCheckSucceeded === false) bits.push("発注ルールチェック未回答");
-    if (info.isCertifiedEmployer) bits.push("認定クライアント");
-  }
-  if (!bits.length && fallbackText) {
-    if (/本人確認済み/.test(fallbackText)) bits.push("本人確認済み");
-    else if (/本人確認未提出/.test(fallbackText)) bits.push("本人確認未提出");
-    if (/発注ルールチェック済み/.test(fallbackText)) bits.push("発注ルールチェック済み");
-    else if (/発注ルールチェック未回答/.test(fallbackText)) bits.push("発注ルールチェック未回答");
-  }
-  return bits.join(" · ") || "—";
-}
-
-function extractClient() {
-  const box = document.getElementById("client_detail_information_container");
-  const info = parseEmbeddedJson(box);
-  const header = document.querySelector(".client_information") || document.querySelector(".client_performance");
-  const headerText = header?.innerText || "";
-  const name =
-    (info && info.userDisplayName) ||
-    document.querySelector(".client_name")?.innerText?.trim() ||
-    "";
-  let achievement = "";
-  let completionRate = "";
-  if (info && info.jobOfferAchievementCount != null) achievement = `${info.jobOfferAchievementCount}件`;
-  if (info && info.projectFinishedRate != null && info.projectFinishedRate !== "") {
-    completionRate = `${info.projectFinishedRate}%`;
-  }
-  const clientSection = headingSection("クライアント情報");
-  const block = (clientSection?.innerText || "") + "\n" + headerText;
-  if (!achievement) {
-    const m = block.match(/募集実績\s*[:：]?\s*([0-9]+)\s*件/);
-    if (m) achievement = `${m[1]}件`;
-  }
-  if (!completionRate) {
-    const m = block.match(/完了率\s*[:：]?\s*([0-9]+)\s*%/);
-    if (m) completionRate = `${m[1]}%`;
-    else if (/完了率[^\n]*—/.test(block) || /プロジェクト完了率[^\n]*—/.test(block)) completionRate = "—";
-  }
-  const identity =
-    info && typeof info.isIdentityVerified === "boolean"
-      ? info.isIdentityVerified
-      : /本人確認済み/.test(block)
-        ? true
-        : /本人確認未提出/.test(block)
-          ? false
-          : null;
-  const ruleCheck =
-    info && typeof info.isEmployerRuleCheckSucceeded === "boolean"
-      ? info.isEmployerRuleCheckSucceeded
-      : /発注ルールチェック済み/.test(block)
-        ? true
-        : /発注ルールチェック未回答/.test(block)
-          ? false
-          : null;
-  return {
-    name: name || "—",
-    verification: verificationFromClient(info, block),
-    identity,
-    ruleCheck,
-    achievement: achievement || "—",
-    completionRate: completionRate || "—",
-  };
-}
-
-function extractPage() {
-  const postedLabel = tableValue("掲載日");
-  const postedAt = (globalThis.JobBiderDates && JobBiderDates.parseJpDate(postedLabel)) || null;
-  const client = extractClient();
-  const title = extractTitle();
-  const details = extractDetails();
-  return {
-    title,
-    details,
-    description: details,
-    client: client.name,
-    verification: client.verification,
-    identity: client.identity,
-    ruleCheck: client.ruleCheck,
-    achievement: client.achievement,
-    completionRate: client.completionRate,
-    postedLabel,
-    postedAt,
-    dueAt: postedAt && JobBiderDates.plusOneMonth(postedAt),
-    url: location.href,
-    at: new Date().toISOString(),
-  };
-}
-
-function pasteBody(extract) {
-  if (!extract) return "";
-  return [extract.title, extract.details || extract.description].filter(Boolean).join("\n\n");
-}
-
 const PRICE_RE = /契約金額|税抜|税込|金額|希望金額|提示金額|報酬|単価|price|amount|budget|reward|contract_amount|payment_amount|yen|円/i;
 
 function labelTextFor(el) {
@@ -297,81 +146,44 @@ function fillDueDate(due) {
   return okY && okM && okD;
 }
 
-// Paste title + 仕事の詳細 into the proposal message box. Nothing on this page is clicked:
-// 新しいテンプレートを作成 is a link to /u/message_templates/new.json and clicking it can
-// navigate the job tab to that raw JSON page. Never fill any <input> (契約金額（税抜） is one).
-async function fillTemplate(extract) {
-  const body = pasteBody(extract);
-  const area = findProposalBox();
-  if (!area || looksLikePrice(area)) return { pasted: false };
-  return { pasted: pasteInto(area, body) };
-}
-
-async function fillApplication(extract) {
-  const due = extract?.dueAt || (extract?.postedAt && JobBiderDates.plusOneMonth(extract.postedAt));
+// On the proposal page: clear the message <textarea> and set 完了予定日 to one month from today.
+// Nothing on this page is clicked (新しいテンプレートを作成 links to /u/message_templates/new.json
+// and would turn the tab into raw JSON) and no <input> is ever written (契約金額（税抜） is one).
+async function fillApplication() {
+  const due = globalThis.JobBiderDates ? JobBiderDates.dueOneMonthFromToday() : null;
   let dueSet = false;
   if (/完了予定日/.test(document.body?.innerText || "")) {
     await randomWait();
     dueSet = fillDueDate(due);
   }
-  const tmpl = await fillTemplate(extract);
-  return {
-    ok: true,
-    stage: "filled",
-    stopped: true,
-    dueSet,
-    pasted: Boolean(tmpl.pasted),
-    extract,
-    description: extract?.details || "",
-  };
-}
-
-function mergeExtract(incoming) {
-  const live = extractPage();
-  if (!incoming) return live;
-  return {
-    ...live,
-    ...incoming,
-    title: incoming.title || live.title,
-    details: incoming.details || incoming.description || live.details,
-    description: incoming.details || incoming.description || live.description,
-    postedAt: incoming.postedAt || live.postedAt,
-    dueAt: incoming.dueAt || live.dueAt,
-  };
+  const area = findProposalBox();
+  const cleared = area && !looksLikePrice(area) ? pasteInto(area, "") : false;
+  return { ok: true, stage: "filled", stopped: true, dueSet, cleared, due };
 }
 
 function isSentPage() {
   return /\/proposals\/\d+/.test(location.pathname);
 }
 
-async function prepare(msg) {
-  const incoming = msg && msg.extract;
-  if (isSentPage()) {
-    return { ok: true, stage: "sent", stopped: true, extract: incoming || null };
-  }
-  if (isProposalPage()) {
-    return fillApplication(mergeExtract(incoming));
-  }
-  const extract = mergeExtract(incoming);
+// On /public/jobs/{id}: click 応募画面へ, then fill the form once it appears.
+async function prepare() {
+  if (isSentPage()) return { ok: true, stage: "sent", stopped: true };
+  if (isProposalPage()) return fillApplication();
   const apply = findApplyControl();
-  if (apply) {
-    await randomWait();
-    apply.click();
-    for (let i = 0; i < 40; i += 1) {
-      await sleep(150);
-      if (isProposalPage()) return fillApplication(extract);
-    }
-    return { ok: true, stage: "clicked_apply", extract, description: extract.details, stopped: false };
+  if (!apply) return { ok: false, error: "no_apply_or_box", stopped: true };
+  await randomWait();
+  apply.click();
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(150);
+    if (isProposalPage()) return fillApplication();
   }
-  return { ok: false, error: "no_apply_or_box", extract, description: extract.details, stopped: true };
+  return { ok: true, stage: "clicked_apply", stopped: false };
 }
 
 window.JobBiderPlatform = {
   name: "crowdworks",
   findApplyControl,
   findProposalBox,
-  extractDescription: () => extractDetails() || (document.body.innerText || "").slice(0, 20000),
-  extractPage,
   isProposalPage,
   prepare,
 };
