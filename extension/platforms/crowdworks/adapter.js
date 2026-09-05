@@ -297,20 +297,12 @@ function fillDueDate(due) {
   return okY && okM && okD;
 }
 
+// Paste title + 仕事の詳細 into the proposal message box. Nothing on this page is clicked:
+// 新しいテンプレートを作成 is a link to /u/message_templates/new.json and clicking it can
+// navigate the job tab to that raw JSON page. Never fill any <input> (契約金額（税抜） is one).
 async function fillTemplate(extract) {
   const body = pasteBody(extract);
-  const create = visibleControls().find((el) => labelOf(el).includes("新しいテンプレートを作成"));
-  if (create) {
-    create.click();
-    await sleep(300);
-  }
-  const dialogs = [...document.querySelectorAll("[role='dialog'], .modal, [class*='Modal'], [class*='dialog']")].filter(
-    visible
-  );
-  const root = dialogs[dialogs.length - 1] || document;
-  // Never fill any <input> here: the template-name box and 契約金額（税抜） are both inputs.
-  const areas = [...root.querySelectorAll("textarea")].filter((el) => visible(el) && !looksLikePrice(el));
-  const area = areas.sort((a, b) => (b.offsetHeight || 0) - (a.offsetHeight || 0))[0] || findProposalBox();
+  const area = findProposalBox();
   if (!area || looksLikePrice(area)) return { pasted: false };
   return { pasted: pasteInto(area, body) };
 }

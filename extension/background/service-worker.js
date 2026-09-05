@@ -1282,6 +1282,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   const url = String(info.url || tab?.url || "");
   if (!url || (!info.url && info.status !== "complete")) return;
+  // A job tab that landed on CrowdWorks' raw template JSON was navigated by mistake; bring it back.
+  if (/crowdworks\.jp\/u\/message_templates\/new\.json/i.test(url)) {
+    getSlots().then((slots) => {
+      if (slots.some((s) => s.tabId === tabId)) chrome.tabs.goBack(tabId).catch(() => {});
+    });
+    return;
+  }
   if (!/crowdworks\.jp\/proposals\/\d+/i.test(url)) return;
   getSlots().then((slots) => {
     const slot = slots.find((s) => s.tabId === tabId);
