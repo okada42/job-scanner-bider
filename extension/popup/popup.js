@@ -50,7 +50,7 @@ async function refresh() {
       state.biderMode === "auto"
         ? `auto · fills to ${state.maxActive || "?"} by itself`
         : state.biderMode === "semi-auto"
-          ? "semi-auto · opens only on Next / Open"
+          ? "semi-auto · pasted URLs open; scan jobs wait for Next / Open"
           : "";
     el.textContent = mode ? `${open} · ${mode}` : open;
   }

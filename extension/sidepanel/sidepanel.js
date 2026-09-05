@@ -58,7 +58,7 @@ async function paint() {
             })
           )
           .join("")
-      : `<p class="meta">Fill window opens the dashboard Max active count of queued URLs. Each job has Open. In dashboard Mode auto, skipping or closing a tab takes the next queued URL; in semi-auto nothing opens until you click.</p>`;
+      : `<p class="meta">Fill window opens the dashboard Max active count of queued URLs. Each job has Open. In dashboard Mode auto, skipping or closing a tab takes the next queued URL; in semi-auto only dashboard-pasted URLs open by themselves.</p>`;
     fillGroup("sent", "sentHead", "sentBox", sent, "SENT");
     fillGroup("skipped", "skippedHead", "skippedBox", skipped, "SKIPPED");
     fillGroup("closed", "closedHead", "closedBox", closed, "CLOSED");
@@ -87,7 +87,7 @@ async function paint() {
       const mode =
         state.biderMode === "auto"
           ? `Mode auto: tabs open by themselves up to Max active (${state.maxActive || "?"}).`
-          : "Mode semi-auto: tabs open only when you click Fill window, Next, or Open.";
+          : "Mode semi-auto: dashboard-pasted URLs open by themselves; scanned jobs wait for Fill window, Next, or Open.";
       status.textContent = `${mode} CrowdWorks: 応募画面へ + date. Lancers: budget + client only, clear 提案文, set 完了予定日. Never fills 契約金額.`;
     }
 

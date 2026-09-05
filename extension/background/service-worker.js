@@ -274,10 +274,8 @@ async function topUpIfNeeded() {
   const settings = await cfg();
   if (!settings.applyEnabled || settings.paused) return { ok: true, skipped: true };
   const bider = await readBiderSettings();
-  if (bider.mode !== "auto") return { ok: true, skipped: true, mode: bider.mode };
-  const slots = await getSlots();
-  const regular = slots.filter((s) => !s.manual).length;
-  if (regular >= bider.maxActive) return { ok: true, slots, maxActive: bider.maxActive };
+  if (bider.mode === "paused") return { ok: true, skipped: true, mode: bider.mode };
+  // semi-auto still reaches fillWindow so pasted dashboard URLs open; queued scan jobs do not.
   return fillWindow({ auto: true, bider });
 }
 
@@ -677,6 +675,40 @@ function slotFromJob(job, extract, tabId) {
 
 const MODE_PAUSED = "Dashboard Bider mode is paused. Set Mode to auto or semi-auto on the dashboard.";
 
+function isManualJob(job) {
+  return Boolean(job?.manual) || Number(job?.priority || 0) >= 100;
+}
+
+// Open every dashboard-pasted URL that is still queued for this name and was not opened,
+// skipped, or closed today. Runs on the 30 s top-up, so a URL pasted while the websocket
+// was down is still picked up.
+async function openPendingManualJobs(slots) {
+  let listed;
+  try {
+    listed = await listBiderJobs();
+  } catch (_) {
+    return slots;
+  }
+  const opened = await getOpenedJobs();
+  const parked = await getParked();
+  const seen = new Set([...slots.map((s) => s.id), ...parked.map((s) => s.id), ...Object.keys(opened)]);
+  const pending = listed.filter(
+    (job) => job?.id && job.url && isManualJob(job) && QUEUEABLE.has(jobStatus(job)) && !seen.has(job.id)
+  );
+  for (const job of pending) {
+    if (await skipLancersOpen(job)) continue;
+    const extract = await fetchJobPreview(job);
+    const marked = { ...job, manual: true, priority: Number(job.priority || 100) };
+    const tabId = await openPreparedTab(marked, extract, slots.length === 0);
+    if (!tabId) continue;
+    slots = [...slots, slotFromJob(marked, extract, tabId)];
+    seen.add(job.id);
+    await setDraft(job.id, extract);
+    await setSlots(slots);
+  }
+  return slots;
+}
+
 // auto: true means nobody clicked anything (alert, 30 s top-up, next after skip/close).
 // Those callers only open tabs when the dashboard Mode is auto.
 async function fillWindow({ auto = false, bider = null } = {}) {
@@ -704,6 +736,8 @@ async function fillWindow({ auto = false, bider = null } = {}) {
     if (settings.mode === "paused") {
       return { ok: !auto ? false : true, error: auto ? undefined : MODE_PAUSED, slots, maxActive, mode: settings.mode };
     }
+    // URLs you pasted on the dashboard are explicit requests: they open in auto and semi-auto alike.
+    slots = await openPendingManualJobs(slots);
     if (auto && settings.mode !== "auto") {
       return { ok: true, skipped: true, slots, maxActive, mode: settings.mode };
     }
@@ -825,6 +859,11 @@ async function openManualJob(job) {
   if (await skipLancersOpen(job)) {
     await setLancersLoggedOut(true, { toast: true });
     return { ok: false, error: "Lancersにログインしてください" };
+  }
+  if (filling) {
+    // fillWindow is running; its openPendingManualJobs pass will pick this URL up.
+    fillAgain = true;
+    return { ok: true, busy: true };
   }
   const slots = await getSlots();
   const existing = slots.find((s) => s.id === job.id);
