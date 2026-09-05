@@ -16,7 +16,7 @@ chrome.storage.sync.get(DEFAULTS, (c) => {
   document.getElementById("backendUrl").value = normalizeBackendUrl(c.backendUrl);
   document.getElementById("token").value = c.token;
   document.getElementById("scanEnabled").checked = Boolean(c.scanEnabled);
-  document.getElementById("applyEnabled").checked = Boolean(c.applyEnabled || c.running);
+  document.getElementById("applyEnabled").checked = Boolean(c.applyEnabled);
 });
 
 document.getElementById("useProd").onclick = () => {

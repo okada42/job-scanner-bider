@@ -30,7 +30,11 @@ function jobsFromApi(data) {
 async function cfg() {
   const stored = await chrome.storage.sync.get(DEFAULTS);
   const merged = { ...DEFAULTS, ...stored };
-  merged.applyEnabled = Boolean(merged.applyEnabled || merged.running);
+  merged.applyEnabled = Boolean(merged.applyEnabled);
+  merged.running = merged.applyEnabled;
+  if (Boolean(stored.running) !== merged.applyEnabled) {
+    chrome.storage.sync.set({ running: merged.applyEnabled });
+  }
   merged.backendUrl = normalizeBackendUrl(merged.backendUrl);
   return merged;
 }
@@ -269,9 +273,11 @@ async function keepLancersSession() {
   } catch (_) {
     tabs = [];
   }
+  const pinned = tabs.filter((tab) => tab.id && tab.pinned && !isLancersWorkUrl(tab.url));
   const idle = tabs.filter((tab) => tab.id && !isLancersWorkUrl(tab.url));
-  if (idle.length) {
-    for (const tab of idle) await reloadLancersTab(tab.id);
+  const targets = pinned.length ? pinned : idle;
+  if (targets.length) {
+    for (const tab of targets) await reloadLancersTab(tab.id);
   } else {
     const stored = Number((await chrome.storage.local.get({ lancersKeepaliveTabId: 0 })).lancersKeepaliveTabId || 0);
     let keep = null;
@@ -1376,6 +1382,9 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.local.get({ lancersKeepaliveTabId: 0 }).then((local) => {
+    if (Number(local.lancersKeepaliveTabId) === tabId) chrome.storage.local.set({ lancersKeepaliveTabId: 0 });
+  });
   if (closingByUs.has(tabId)) {
     closingByUs.delete(tabId);
     return;
