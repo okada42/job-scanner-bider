@@ -83,6 +83,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   document.addEventListener(
     "click",
     (event) => {
+      // Only a real user click counts as "sent"; clicks the adapters dispatch are untrusted.
+      if (!event.isTrusted) return;
       const el = event.target && event.target.closest ? event.target.closest("a, button, input") : null;
       if (!el) return;
       const label = (el.innerText || el.value || el.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();

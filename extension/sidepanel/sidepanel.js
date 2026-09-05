@@ -58,7 +58,7 @@ async function paint() {
             })
           )
           .join("")
-      : `<p class="meta">Fill window opens the dashboard Max active count of queued URLs. Each job has Open. Skip or close a tab to take the next queued URL.</p>`;
+      : `<p class="meta">Fill window opens the dashboard Max active count of queued URLs. Each job has Open. In dashboard Mode auto, skipping or closing a tab takes the next queued URL; in semi-auto nothing opens until you click.</p>`;
     fillGroup("sent", "sentHead", "sentBox", sent, "SENT");
     fillGroup("skipped", "skippedHead", "skippedBox", skipped, "SKIPPED");
     fillGroup("closed", "closedHead", "closedBox", closed, "CLOSED");
@@ -76,13 +76,19 @@ async function paint() {
     } else if (state.paused) {
       status.className = "meta warn";
       status.textContent = "Bider is paused.";
+    } else if (state.biderMode === "paused") {
+      status.className = "meta warn";
+      status.textContent = "Dashboard Mode is paused: the extension opens nothing until Mode is auto or semi-auto.";
     } else if (state.lancersLoggedOut) {
       status.className = "meta warn";
       status.textContent = "Lancersにログインしてください";
     } else {
       status.className = "meta";
-      status.textContent =
-        "CrowdWorks: 応募画面へ + date. Lancers: budget + client only, clear 提案文, set 完了予定日. Never fills 契約金額.";
+      const mode =
+        state.biderMode === "auto"
+          ? `Mode auto: tabs open by themselves up to Max active (${state.maxActive || "?"}).`
+          : "Mode semi-auto: tabs open only when you click Fill window, Next, or Open.";
+      status.textContent = `${mode} CrowdWorks: 応募画面へ + date. Lancers: budget + client only, clear 提案文, set 完了予定日. Never fills 契約金額.`;
     }
 
     const box = document.getElementById("jobs");

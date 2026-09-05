@@ -38,14 +38,21 @@ async function refresh() {
     el.textContent = "Enter your name in Options before using Bider.";
   } else if (state.lancersLoggedOut) {
     el.textContent = "Lancersにログインしてください";
+  } else if (!state.applyEnabled) {
+    el.textContent = "Apply stopped";
+  } else if (state.paused) {
+    el.textContent = "Paused";
+  } else if (state.biderMode === "paused") {
+    el.textContent = "Dashboard Mode is paused — nothing opens";
   } else {
-    el.textContent = !state.applyEnabled
-      ? "Apply stopped"
-      : state.paused
-        ? "Paused"
-        : slots.length
-          ? `${slots.length} job tab${slots.length === 1 ? "" : "s"} open`
-          : "Idle / waiting";
+    const open = slots.length ? `${slots.length} job tab${slots.length === 1 ? "" : "s"} open` : "No job tabs open";
+    const mode =
+      state.biderMode === "auto"
+        ? `auto · fills to ${state.maxActive || "?"} by itself`
+        : state.biderMode === "semi-auto"
+          ? "semi-auto · opens only on Next / Open"
+          : "";
+    el.textContent = mode ? `${open} · ${mode}` : open;
   }
   const scanEl = document.getElementById("scanStatus");
   if (!state.scanEnabled) {

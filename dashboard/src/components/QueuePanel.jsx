@@ -53,8 +53,11 @@ export const QueuePanel = memo(function QueuePanel({ bider, busy, note, onMode, 
         </form>
       )}
       <p className="muted">
-        Max active is the normal window. URLs pasted here open immediately as extra tabs and stay at the
-        front of the queue. One job URL per line. No Discord.
+        Mode controls every Chrome profile running the extension. <strong>auto</strong>: tabs open by
+        themselves up to Max active (new-job alerts, the 30-second top-up, and the next URL after a skip or
+        close). <strong>semi-auto</strong>: nothing opens on its own; Fill window, Next, Open, and URLs pasted
+        here still work. <strong>paused</strong>: the extension claims and opens nothing. Pasted URLs stay at
+        the front of the queue, one per line. No Discord.
       </p>
       {note ? <p className={note.ok ? "scan-note" : "err small"}>{note.text}</p> : null}
     </article>

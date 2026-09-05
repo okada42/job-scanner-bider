@@ -179,6 +179,7 @@ async function migrateLocalhostIfUnreachable() {
 
 let filling = false;
 let fillAgain = false;
+let fillAgainExplicit = false;
 const finishing = new Set();
 const closingByUs = new Set();
 
@@ -265,28 +266,52 @@ async function onJobAlert(job) {
   const settings = await cfg();
   if (!settings.applyEnabled || settings.paused) return;
   if (await skipLancersOpen(job)) return;
-  await fillWindow();
+  await fillWindow({ auto: true });
   return job;
 }
 
 async function topUpIfNeeded() {
   const settings = await cfg();
   if (!settings.applyEnabled || settings.paused) return { ok: true, skipped: true };
+  const bider = await readBiderSettings();
+  if (bider.mode !== "auto") return { ok: true, skipped: true, mode: bider.mode };
   const slots = await getSlots();
-  const maxActive = await readMaxActive();
   const regular = slots.filter((s) => !s.manual).length;
-  if (regular >= maxActive) return { ok: true, slots, maxActive };
-  return fillWindow();
+  if (regular >= bider.maxActive) return { ok: true, slots, maxActive: bider.maxActive };
+  return fillWindow({ auto: true, bider });
 }
 
-async function readMaxActive() {
+const BIDER_MODES = new Set(["auto", "semi-auto", "paused"]);
+
+// The dashboard's Bider card is the single source of truth for Mode and Max active.
+//   auto      – tabs open by themselves up to Max active (alerts, 30 s top-up, next after skip/close).
+//   semi-auto – nothing opens on its own; Next / Open / Fill window and pasted URLs still work.
+//   paused    – the extension claims and opens nothing.
+async function readBiderSettings() {
+  const fallback = (await chrome.storage.local.get({ biderSettings: null })).biderSettings || {};
   try {
     const data = await api("/api/settings");
     const n = Number(data?.bider?.max_active_jobs);
-    return Math.max(1, Math.min(10, Number.isFinite(n) ? n : 1));
+    const raw = String(data?.bider?.mode || "auto").toLowerCase();
+    const next = {
+      maxActive: Math.max(1, Math.min(10, Number.isFinite(n) ? n : 1)),
+      mode: BIDER_MODES.has(raw) ? raw : "auto",
+      at: new Date().toISOString(),
+    };
+    await chrome.storage.local.set({ biderSettings: next });
+    return next;
   } catch (_) {
-    return 1;
+    return {
+      maxActive: Math.max(1, Math.min(10, Number(fallback.maxActive) || 1)),
+      mode: BIDER_MODES.has(fallback.mode) ? fallback.mode : "auto",
+      at: fallback.at || null,
+      stale: true,
+    };
   }
+}
+
+async function readMaxActive() {
+  return (await readBiderSettings()).maxActive;
 }
 
 async function todayJst() {
@@ -548,19 +573,12 @@ async function claimJobs(need, excludeIds) {
   if (need <= 0) return [];
   const skip = excludeIds || new Set();
   let claimed = [];
+  // No force flag: the server honours the dashboard Mode (paused claims nothing).
   try {
-    const data = await api(`/api/jobs/next-batch?count=${need}&limit=${need}&force=true`);
+    const data = await api(`/api/jobs/next-batch?count=${need}&limit=${need}`);
     if (Array.isArray(data?.jobs)) claimed = data.jobs;
   } catch (_) {
     /* older API */
-  }
-  if (!claimed.length) {
-    try {
-      const data = await api(`/api/jobs/next-batch?count=${need}`);
-      if (Array.isArray(data?.jobs)) claimed = data.jobs;
-    } catch (_) {
-      /* older API */
-    }
   }
   if (!claimed.length) {
     for (let i = 0; i < need; i += 1) {
@@ -601,24 +619,29 @@ async function tabStillOpen(tabId) {
   }
 }
 
-async function reviveSlots(slots) {
+// A slot whose tab is gone (closed while the worker was asleep, or Chrome restarted) is treated
+// exactly like a tab the user closed: parked as closed, never reopened on its own.
+async function dropClosedSlots(slots) {
   const next = [];
+  let changed = false;
   for (const slot of slots) {
     if (await tabStillOpen(slot.tabId)) {
       next.push(slot);
       continue;
     }
-    const extract = slot.extract || (await fetchJobPreview(slot));
-    if (await skipLancersOpen(slot)) {
-      next.push({ ...slot, tabId: null, extract });
+    if (!slot.tabId && (await skipLancersOpen(slot))) {
+      next.push(slot);
       continue;
     }
-    const tabId = await openPreparedTab(slot, extract, next.length === 0);
-    const updated = { ...slot, tabId, opened: true, extract };
-    next.push(updated);
-    await setDraft(slot.id, extract);
+    changed = true;
+    try {
+      await api(`/api/jobs/${slot.id}/status`, { method: "POST", body: JSON.stringify({ status: "SKIPPED" }) });
+    } catch (_) {
+      /* offline or already final */
+    }
+    await parkSlot(slot, "closed");
   }
-  await setSlots(next);
+  if (changed) await setSlots(next);
   return next;
 }
 
@@ -652,7 +675,11 @@ function slotFromJob(job, extract, tabId) {
   };
 }
 
-async function fillWindow() {
+const MODE_PAUSED = "Dashboard Bider mode is paused. Set Mode to auto or semi-auto on the dashboard.";
+
+// auto: true means nobody clicked anything (alert, 30 s top-up, next after skip/close).
+// Those callers only open tabs when the dashboard Mode is auto.
+async function fillWindow({ auto = false, bider = null } = {}) {
   const c = await cfg();
   if (!c.applyEnabled) {
     return { ok: false, error: "Enable apply (Bider) in the popup first." };
@@ -665,13 +692,21 @@ async function fillWindow() {
   }
   if (filling) {
     fillAgain = true;
+    if (!auto) fillAgainExplicit = true;
     return { ok: true, busy: true, slots: await getSlots() };
   }
-    filling = true;
-    try {
-      registerActor();
-      const maxActive = await readMaxActive();
-    let slots = await reviveSlots(await getSlots());
+  filling = true;
+  try {
+    registerActor();
+    const settings = bider || (await readBiderSettings());
+    const maxActive = settings.maxActive;
+    let slots = await dropClosedSlots(await getSlots());
+    if (settings.mode === "paused") {
+      return { ok: !auto ? false : true, error: auto ? undefined : MODE_PAUSED, slots, maxActive, mode: settings.mode };
+    }
+    if (auto && settings.mode !== "auto") {
+      return { ok: true, skipped: true, slots, maxActive, mode: settings.mode };
+    }
     const have = new Set(slots.map((s) => s.id));
     const regular = slots.filter((s) => !s.manual).length;
     const need = maxActive - regular;
@@ -697,14 +732,17 @@ async function fillWindow() {
         error: "No queued URLs to open. Check the queue and Max active on the dashboard.",
         slots,
         maxActive,
+        mode: settings.mode,
       };
     }
-    return { ok: true, slots, maxActive };
+    return { ok: true, slots, maxActive, mode: settings.mode };
   } finally {
     filling = false;
     if (fillAgain) {
+      const explicit = fillAgainExplicit;
       fillAgain = false;
-      fillWindow();
+      fillAgainExplicit = false;
+      fillWindow({ auto: !explicit });
     }
   }
 }
@@ -783,6 +821,7 @@ async function openManualJob(job) {
   const settings = await cfg();
   if (!job?.id || !job.url) return { ok: false };
   if (!settings.applyEnabled || settings.paused) return { ok: true, queued: true };
+  if ((await readBiderSettings()).mode === "paused") return { ok: true, queued: true, mode: "paused" };
   if (await skipLancersOpen(job)) {
     await setLancersLoggedOut(true, { toast: true });
     return { ok: false, error: "Lancersにログインしてください" };
@@ -809,6 +848,7 @@ async function openQueuedJob(jobId) {
   const listed = await listBiderJobs();
   const job = listed.find((row) => row.id === jobId);
   if (!job?.url) return { ok: false, error: "That job is not in the queue." };
+  if ((await readBiderSettings()).mode === "paused") return { ok: false, error: MODE_PAUSED };
   if (await skipLancersOpen(job)) {
     await setLancersLoggedOut(true, { toast: true });
     return { ok: false, error: "Lancersにログインしてください" };
@@ -851,7 +891,7 @@ async function finishSlot(jobId, status, opts = {}) {
       }
     }
     await setSlots(slots.filter((s) => s.id !== jobId));
-    return fillWindow();
+    return fillWindow({ auto: true });
   } finally {
     finishing.delete(jobId);
   }
@@ -947,7 +987,8 @@ async function runApplyFlow(tabId, draft, jobId) {
   return first;
 }
 
-async function setApplyEnabled(enabled) {
+// The on/off toggle only arms Bider; START / RESUME / NEXT are the clicks that open tabs in semi-auto.
+async function setApplyEnabled(enabled, { auto = false } = {}) {
   if (enabled && !(await getActor())) {
     await chrome.storage.sync.set({ applyEnabled: false, running: false });
     disconnectWs();
@@ -958,7 +999,7 @@ async function setApplyEnabled(enabled) {
   await chrome.storage.sync.set(patch);
   if (enabled) {
     await connect();
-    return fillWindow();
+    return fillWindow({ auto });
   }
   disconnectWs();
   return { ok: true };
@@ -1123,7 +1164,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
     } else if (msg.type === "SET_APPLY") {
       try {
-        const result = await setApplyEnabled(Boolean(msg.enabled));
+        const result = await setApplyEnabled(Boolean(msg.enabled), { auto: true });
         sendResponse({ ok: Boolean(result?.ok !== false), ...result });
       } catch (err) {
         sendResponse({ ok: false, error: String(err && err.message ? err.message : err) });
@@ -1250,6 +1291,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         actorName: "",
         biderDay: "",
         lancersLoggedOut: false,
+        biderSettings: null,
       });
       const slots = Array.isArray(local.activeSlots) ? local.activeSlots : [];
       const parked = Array.isArray(local.parkedSlots) ? local.parkedSlots : [];
@@ -1268,6 +1310,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         hasToken: Boolean(c.token),
         actorName: cleanActorName(local.actorName),
         biderDay: local.biderDay || "",
+        biderMode: local.biderSettings?.mode || null,
+        maxActive: local.biderSettings?.maxActive || null,
         focusedTabId,
         lancersLoggedOut: Boolean(local.lancersLoggedOut),
         scanStatus: local.scanStatus || null,
